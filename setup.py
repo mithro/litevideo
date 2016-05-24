@@ -36,5 +36,6 @@ setup(
     packages=find_packages(),
     setup_requires=['setuptools-pep8'],
     install_requires=["litex"],
+    test_requires=["Pillow"],
     include_package_data=True,
 )
