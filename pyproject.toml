@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litevideo"
+version = "2026.04.dev0"
+description = "Small footprint and configurable video cores"
+readme = "README.md"
+license = { text = "BSD-2-Clause" }
+requires-python = ">=3.9"
+authors = [{ name = "Florent Kermarrec", email = "florent@enjoy-digital.fr" }]
+keywords = ["HDL", "FPGA", "hardware design", "HDMI"]
+classifiers = [
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Environment :: Console",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+]
+dependencies = ["migen", "litex", "litedram"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pillow", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/enjoy-digital/litevideo"
+
+[tool.setuptools.packages.find]
+include = ["litevideo*"]
+exclude = ["test*", "bench*", "doc*", "scripts*"]
+
+[tool.setuptools.package-data]
+litevideo = ["terminal/*.bin", "terminal/*.jpg"]
+
+# Pinned to the LiteX 2026.04 family (same pins as the NeTV2 modernisation
+# tree) so simulations and builds are reproducible. LiteX 2026.04 pins migen
+# to a git.m-labs.hk SHA that is mirrored in mithro/migen.
+[tool.uv.sources]
+migen    = { git = "https://github.com/mithro/migen.git", rev = "4c2ae8dfeea37f235b52acb8166f12acaaae4f7c" }
+litex    = { git = "https://github.com/enjoy-digital/litex.git", tag = "2026.04" }
+litedram = { git = "https://github.com/enjoy-digital/litedram.git", tag = "2026.04" }
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-q"

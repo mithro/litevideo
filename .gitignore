@@ -87,3 +87,12 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+# uv / local environments and scratch
+.venv/
+tmp/
+# simulation outputs
+*.vcd
+*.fst
+# gateware builds
+build/
