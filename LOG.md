@@ -54,3 +54,19 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   `Inverted()` handling on the `hdmi_out` 0 clock pair, clock-lane pattern,
   OSERDES reset/OCE sequencing, and TMDS signal integrity. rpi5 PCIe FPC is
   not connected (LTSSM stuck in Detect), which does not affect this work.
+
+## 2026-09-06 (afternoon, phases 0 and 1)
+
+- Plan for phases 0+1 approved after two review rounds; the reviewer executed
+  every code block of the plan against the pinned environment.
+- `hdmi-support` now holds 14 commits: `pyproject.toml` + `uv.lock` pinned to
+  LiteX 2026.04 (setup.py removed), `test/` with stream helpers and the ported
+  colour-space and output-core benches, `scripts/limited.py` (verified: runs
+  the command in a transient `run-*.scope`), GitHub Actions CI, `doc/`
+  skeleton, and the protocol layer `litevideo/hdmi/` (constants, BCH ECC,
+  Python golden model, TMDS character decoder, period decoder, data island
+  decoder and encoder) with 36 passing tests including an all-gateware
+  encoder -> period decoder -> island decoder round trip.
+- Fixes to existing code: LiteDRAM 2026.04 port attribute names, `phy_layout("raw")`
+  `c2` width 11 -> 10 (upstream typo), Pillow `ANTIALIAS` -> `LANCZOS`.
+- Sub-agent code review of the protocol layer dispatched; CI run pending.

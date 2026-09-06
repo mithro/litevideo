@@ -7,19 +7,19 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] Worktrees and branches
 - [x] Design spec written
 - [x] Spec review by sub-agent (2 rounds, approved)
-- [~] Phase 0+1 plan under review
-- [ ] `pyproject.toml` + uv environment pinned to LiteX 2026.04
-- [ ] `test/` with the existing csc benches ported to pytest
-- [ ] `.github/workflows/ci.yml`
-- [ ] `scripts/limited.py` cgroup wrapper
-- [ ] `doc/` skeleton and README update
+- [x] Phase 0+1 plan (2 review rounds, approved)
+- [x] `pyproject.toml` + uv environment pinned to LiteX 2026.04
+- [x] `test/` with the existing csc benches ported to pytest
+- [~] `.github/workflows/ci.yml` (pushed, first run pending)
+- [x] `scripts/limited.py` cgroup wrapper
+- [x] `doc/` skeleton and README update
 
 ## Phase 1: protocol layer
-- [ ] `hdmi/common.py` constants with spec references
-- [ ] `hdmi/bch.py` + vectors vs hdl-util
-- [ ] `hdmi/model.py` golden model
-- [ ] `hdmi/period.py` period decoder (+ DecodeTERC4 compat)
-- [ ] island decoder, island encoder, tests, `doc/hdmi-protocol.md`
+- [x] `hdmi/common.py` constants with spec references
+- [x] `hdmi/bch.py` + vectors vs hdl-util
+- [x] `hdmi/model.py` golden model
+- [x] `hdmi/period.py` period decoder (DecodeTERC4 compat wrapper deferred to phase 5)
+- [~] island decoder, island encoder, tests, `doc/hdmi-protocol.md` (done; sub-agent review pending)
 
 ## Phase 2: transmitter
 - [ ] framer, scheduler, InfoFrame generators, `HDMIOut`, S7 PHY hdmi mode
