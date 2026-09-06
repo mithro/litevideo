@@ -121,3 +121,15 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   hdmi_out 0 -> Magewell, Pi 5 HDMI-A-2 -> hdmi_in 1, dormant Pi Zero -> hdmi_in 0.
 - Phase 3 plan written; its review sub-agent hit an API rate limit, so the
   implementation proceeds with self-review and a later review pass.
+- **Phase 3 audio landed in simulation** (`litevideo/hdmi/audio/`: constants +
+  IEC 60958 channel status, packet model, `AudioSamplePacketizer`,
+  `ACRGenerator` (constant and measured CTS), `AudioInfoFrameGenerator`,
+  `AudioExtract`, `ToneGenerator`; `HDMITransmitter(with_audio=True)`).
+  Full round trip tone -> packets -> islands -> decoders -> samples is
+  bit-exact; 80 tests pass. Bench: tone + ACR + Audio InfoFrame in the tx
+  bench, extract FIFO + checks in the loopback, Magewell ALSA FFT check.
+  `doc/audio.md` written. Vivado build of the audio bench stopped at the
+  peer session's request (their user-prioritised route was being OOM-killed);
+  to rerun when they release Vivado. Observation: after TaskStop killed the
+  build wrapper, a Vivado child was found outside the systemd scope; the
+  wrapper itself verifies fine, so check `/proc/<pid>/cgroup` after launch.

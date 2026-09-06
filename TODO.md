@@ -28,8 +28,9 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [~] rebuild with the OCE fix and re-run T1/T4 for the final reports (Vivado hold by peer session)
 
 ## Phase 3: audio
-- [ ] extract, embed, ACR, sources (tone/CSR/DMA), IEC 60958 status, docs
-- [ ] T1 tone round trip on rpi5
+- [x] plan written (review sub-agent hit a rate limit; self-reviewed)
+- [x] extract, packetizer (embed), ACR, tone source, IEC 60958 status, docs (CSR/DMA sources deferred)
+- [~] T1 tone round trip and T4 Magewell audio capture on rpi5 (build pending Vivado slot)
 
 ## Phase 4: pixel formats
 - [ ] colorimetry/range parameterisation, converter, AVI-driven rx path, docs
