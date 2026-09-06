@@ -37,6 +37,7 @@ class CSCMatrix(LiteXModule):
 
     def __init__(self, dw=8, cw=12, matrix=None):
         self.dw, self.cw = dw, cw
+        self.constant = matrix is not None      # coefficient signals are driven by constants
         self.sink   = Record(matrix_layout(dw))
         self.source = Record(matrix_layout(dw))
         self.ce     = Signal(reset=1)
