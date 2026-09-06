@@ -1730,7 +1730,7 @@ class TestHDMIPeriodDecoder(unittest.TestCase):
         p = model.Packet.null()
         island = model.island_tokens([p])
         toks = [model.control_chars(0, 0)] * 12 + island[:20] + [model.control_chars(0, 0)] * 12
-        out = run_lines([toks])
+        out = run_lines([toks, toks])   # FSM resets in CONTROL; the copy only satisfies run_lines slicing
         self.assertTrue(any(o["error"] for o in out))
         self.assertEqual(out[-1]["period"], Period.CONTROL)
 ```
