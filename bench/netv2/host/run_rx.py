@@ -28,6 +28,56 @@ RX = ["main_raw_frame_crc", "main_rgb_frame_crc", "hdmi_rx_status", "hdmi_rx_tim
       "chansync_channels_synced", "clocking_locked"]
 
 
+def pi_reprobe():
+    """Make the Pi re-read the bench EDID and re-select its preferred mode: there
+    is no HPD line on hdmi_in 1, so force the DRM connector off and back on,
+    which raises the hotplug event the compositor (labwc) needs to change mode."""
+    rig.ssh(["sudo", "sh", "-c", "echo off > /sys/class/drm/card1-HDMI-A-2/status"], check=False)
+    time.sleep(3.0)
+    rig.ssh(["sudo", "sh", "-c", "echo detect > /sys/class/drm/card1-HDMI-A-2/status"], check=False)
+    time.sleep(6.0)
+
+
+def pi_tone(seconds=8, freq=1000.0, rate=48000):
+    """Play a stereo sine on the Pi's HDMI-A-2 ALSA device (vc4hdmi1) in the background."""
+    import numpy as np
+    import wave
+    n = int(rate * seconds)
+    t = np.arange(n) / rate
+    x = (0.5 * 32767 * np.sin(2 * np.pi * freq * t)).astype("<i2")
+    local = os.path.join("tmp", "pi_tone.wav")
+    os.makedirs("tmp", exist_ok=True)
+    with wave.open(local, "wb") as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(np.repeat(x, 2).tobytes())
+    rig.copy_to(local, "pi_tone.wav")
+    os.remove(local)
+    rig.ssh(["sh", "-c", f"nohup aplay -q -D plughw:vc4hdmi1,0 {rig.REMOTE_DIR}/pi_tone.wav > /dev/null 2>&1 &"], check=False)
+
+
+def check_captured_tone(words, fs=48000, freq=1000.0):
+    """Captured subframes: left/right alternate, spectrum peaks at ``freq`` on both channels."""
+    import numpy as np
+    samples = [(w & 0xFFFFFF, (w >> 24) & 7) for w in words if w >> 31]
+    if len(samples) < 200:
+        return False, f"only {len(samples)} subframes captured"
+    start = next(i for i, (_, c) in enumerate(samples) if c == 0)
+    samples = samples[start:]
+    if any(samples[i][1] != (i & 1) for i in range(len(samples))):
+        return False, "channels do not alternate L/R"
+    details = []
+    ok = True
+    for ch in (0, 1):
+        x = np.array([v - (1 << 24) if v & (1 << 23) else v for v, c in samples if c == ch], dtype=float)
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+        peak = int(np.argmax(spec[1:]) + 1)
+        peak_hz = peak * fs / len(x)
+        rms = np.sqrt(np.mean(x ** 2)) / (1 << 23)
+        ok = ok and abs(peak_hz - freq) <= 2 * fs / len(x) and rms > 0.01
+        details.append(f"ch{ch}: peak {peak_hz:.0f} Hz (bin {fs / len(x):.0f} Hz), rms {rms:.3f} FS")
+    return ok, f"{len(samples)} subframes; " + "; ".join(details)
+
+
 def pi_hdmi_state():
     r = rig.ssh(["cat", "/sys/class/drm/card1-HDMI-A-2/status", "/sys/class/drm/card1-HDMI-A-2/enabled",
                  "/sys/class/drm/card1-HDMI-A-2/modes"], check=False)
@@ -44,6 +94,8 @@ def main():
                         "(HDMI2USB-litex-firmware firmware/hdmi_in0.c calibrate_delays)")
     p.add_argument("--report", default=None)
     p.add_argument("--no-load", action="store_true")
+    p.add_argument("--reprobe", action="store_true", help="force the Pi to re-read the bench EDID before measuring")
+    p.add_argument("--tone", action="store_true", help="play a 1 kHz tone from the Pi and check the extracted audio")
     args = p.parse_args()
 
     bitstream = os.path.join(args.build, "gateware", "kosagi_netv2.bit")
@@ -62,7 +114,11 @@ def main():
     if not args.no_load:
         notes.append("openFPGALoader: " + rig.load(bitstream).strip().splitlines()[-1])
     time.sleep(2.0)
+    if args.reprobe:
+        pi_reprobe()
+        notes.append("Pi HDMI-A-2 after re-probe: " + pi_hdmi_state())
 
+    rig.csr_write("hdmi_rx_control", 0b10)   # HDMI decoding, convert to RGB (a previous run may have left DVI mode)
     lock = rig.csr_read(["clocking_locked"])["clocking_locked"]
     check("input MMCM locked to the TMDS clock", lock == 1, f"locked={lock}")
     if not lock:
@@ -95,10 +151,15 @@ def main():
         notes.append("no preambles seen: receiver switched to DVI mode (control.dvi_mode)")
 
     check("channels synchronised", b["chansync_channels_synced"] == 1, f"{b['chansync_channels_synced']}")
-    st = b["hdmi_rx_status"]
-    hactive, vactive = (st >> 1) & 0x1FFF, (st >> 14) & 0x1FFF
-    tm = b["hdmi_rx_timing"]
-    htotal, vtotal = tm & 0x1FFF, (tm >> 13) & 0x1FFF
+    from litevideo.hdmi.receiver import HDMIReceiver
+    rxf = HDMIReceiver(with_audio=True)   # CSR field offsets
+
+    def field(word, csr, name):
+        f = getattr(csr.fields, name)
+        return (word >> f.offset) & ((1 << f.size) - 1)
+
+    hactive, vactive = field(b["hdmi_rx_status"], rxf.status, "hactive"), field(b["hdmi_rx_status"], rxf.status, "vactive")
+    htotal, vtotal = field(b["hdmi_rx_timing"], rxf.timing, "htotal"), field(b["hdmi_rx_timing"], rxf.timing, "vtotal")
     check(f"active resolution {args.expect}", (hactive, vactive) == (exp_w, exp_h), f"{hactive}x{vactive}, total {htotal}x{vtotal}")
     fps = ((b["hdmi_rx_frames"] - a["hdmi_rx_frames"]) & 0xFFFFFFFF) / dt
     check("frame rate ~60 Hz", 55 <= fps <= 65, f"{fps:.1f} fps over {dt:.2f} s")
@@ -107,20 +168,30 @@ def main():
             "video": ((b["hdmi_rx_periods_1"] >> 16) - (a["hdmi_rx_periods_1"] >> 16)) & 0xFFFF,
             "island": (b["hdmi_rx_periods_3"] - a["hdmi_rx_periods_3"]) & 0xFFFF}
     check("video periods seen", hist["video"] > 0 or (dvi_fallback and hactive > 0), str(hist))
-    avi = b["hdmi_rx_avi"]
-    # hdmi_rx_avi fields: y[1:0] c[3:2] q[5:4] vic[12:6] m[14:13] valid[15] checksum_ok[16]
-    avi_valid = (avi >> 15) & 1
+    avi = {n: field(b["hdmi_rx_avi"], rxf.avi, n) for n in ("y", "c", "q", "vic", "m", "yq", "valid", "checksum_ok")}
     islands = (b["hdmi_rx_islands"] - a["hdmi_rx_islands"]) & 0xFFFFFFFF
     mode = "HDMI (islands present)" if islands else "DVI (no islands)"
-    if avi_valid:
-        detail = f"y={avi & 3} c={(avi >> 2) & 3} q={(avi >> 4) & 3} vic={(avi >> 6) & 0x7F} m={(avi >> 13) & 3} checksum_ok={(avi >> 16) & 1}"
-        check("AVI InfoFrame received", ((avi >> 16) & 1) == 1, detail)
+    if avi["valid"]:
+        check("AVI InfoFrame received with a good checksum", avi["checksum_ok"] == 1,
+              " ".join(f"{k}={v}" for k, v in avi.items()) + f" (+{(b['hdmi_rx_avi_count'] - a['hdmi_rx_avi_count']) & 0xFFFFFFFF} in the window)")
     if dvi_fallback:
         mode = "DVI (no preambles, decoded with the DVI rule)"
     check("mode identified", True, f"{mode}: +{islands} islands, +{(b['hdmi_rx_packets'] - a['hdmi_rx_packets']) & 0xFFFFFFFF} packets, ECC errors +{(b['hdmi_rx_ecc_errors'] - a['hdmi_rx_ecc_errors']) & 0xFFFFFFFF}")
     if islands:
         n, cts = b["hdmi_rx_audio_n"], b["hdmi_rx_audio_cts"]
         check("audio ACR", True, f"N={n} CTS={cts} asps +{(b['hdmi_rx_audio_asps'] - a['hdmi_rx_audio_asps']) & 0xFFFFFFFF}")
+    if args.tone:
+        pi_tone(seconds=20)
+        time.sleep(3.0)
+        x = rig.csr_read(["hdmi_rx_audio_asps", "hdmi_rx_audio_acrs", "hdmi_rx_audio_n", "hdmi_rx_audio_cts", "hdmi_rx_audio_infoframe"])
+        words = rig.csr_capture("hdmi_rx_audio_capture")
+        y = rig.csr_read(["hdmi_rx_audio_asps", "hdmi_rx_audio_acrs"])
+        inf = x["hdmi_rx_audio_infoframe"]
+        check("audio packets from the Pi", y["hdmi_rx_audio_asps"] > x["hdmi_rx_audio_asps"],
+              f"asps +{y['hdmi_rx_audio_asps'] - x['hdmi_rx_audio_asps']}, acrs +{y['hdmi_rx_audio_acrs'] - x['hdmi_rx_audio_acrs']}, "
+              f"N={x['hdmi_rx_audio_n']} CTS={x['hdmi_rx_audio_cts']}, infoframe cc={inf & 7} sf={(inf >> 9) & 7} ss={(inf >> 7) & 3} valid={(inf >> 20) & 1}")
+        ok, detail = check_captured_tone(words)
+        check("extracted 1 kHz tone from the Pi", ok, detail)
     crcs = [rig.csr_read(["main_raw_frame_crc", "main_rgb_frame_crc"]) for _ in range(3)]
     check("frame CRC stable (static desktop)", len({c["main_raw_frame_crc"] for c in crcs}) == 1,
           "raw " + ", ".join(f"{c['main_raw_frame_crc']:#010x}" for c in crcs) + "; rgb " + ", ".join(f"{c['main_rgb_frame_crc']:#010x}" for c in crcs))

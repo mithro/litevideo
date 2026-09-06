@@ -75,7 +75,8 @@ class TimingMeasure(LiteXModule):
         vlines = Signal(13)
         self.sync += [
             If(vs_edge,
-                self.vtotal.eq(lines), lines.eq(0),
+                # the HSYNC edge coinciding with the VSYNC edge belongs to the new frame
+                self.vtotal.eq(lines), lines.eq(hs_edge),
                 self.vactive.eq(vlines), vlines.eq(0),
                 self.frames.eq(self.frames + 1),
             ).Elif(hs_edge,
