@@ -86,6 +86,55 @@ class S6Clocking(Module, AutoCSR):
         self.comb += self._cd_pix_o.clk.eq(self._cd_pix.clk)
 
 
+class S7MMCMClocking(Module, AutoCSR):
+    """7-series input clocking for any nominal pixel clock.
+
+    Uses LiteX's ``S7MMCM`` to derive ``pix`` (1x), ``pix1p25x`` (1.25x, the
+    ISERDESE2 CLKDIV of the 8:1 capture) and ``pix5x`` (5x, the ISERDESE2
+    CLK) from the received TMDS clock, with the MMCM configuration computed
+    at build time for ``clkin_freq`` (e.g. 65 MHz for 1024x768, 74.25 MHz for
+    720p). ``pix_o``/``pix5x_o`` alias ``pix``/``pix5x`` for compatibility
+    with ``S7Clocking``. Unlike ``S7Clocking`` there is no DRP: a different
+    input frequency needs a different build.
+    """
+    def __init__(self, pads, clkin_freq=74.25e6, split_clocking=False, margin=1e-2):
+        from litex.soc.cores.clock import S7MMCM
+        assert not split_clocking
+        self._mmcm_reset = CSRStorage(reset=0)
+        self._locked = CSRStatus()
+
+        self.locked = Signal()
+        self.clock_domains.cd_pix = ClockDomain()
+        self.clock_domains.cd_pix_o = ClockDomain()
+        self.clock_domains.cd_pix1p25x = ClockDomain()
+        self.clock_domains.cd_pix5x = ClockDomain(reset_less=True)
+        self.clock_domains.cd_pix5x_o = ClockDomain(reset_less=True)
+
+        # # #
+
+        self.clk_input = Signal()
+        clk_input_bufr = Signal()
+        if hasattr(pads.clk_p, "inverted"):
+            self.specials += Instance("IBUFDS_DIFF_OUT", i_I=pads.clk_p, i_IB=pads.clk_n, o_OB=self.clk_input)
+        else:
+            self.specials += Instance("IBUFDS_DIFF_OUT", i_I=pads.clk_p, i_IB=pads.clk_n, o_O=self.clk_input)
+        self.specials += Instance("BUFR", i_I=self.clk_input, o_O=clk_input_bufr)
+
+        self.submodules.mmcm = mmcm = S7MMCM(speedgrade=-2)
+        self.comb += mmcm.reset.eq(self._mmcm_reset.storage)
+        mmcm.register_clkin(clk_input_bufr, clkin_freq)
+        mmcm.create_clkout(self.cd_pix,      clkin_freq,        margin=margin)
+        mmcm.create_clkout(self.cd_pix1p25x, 1.25 * clkin_freq, margin=margin)
+        mmcm.create_clkout(self.cd_pix5x,    5 * clkin_freq,    margin=margin, with_reset=False)
+        self.comb += [
+            self.cd_pix_o.clk.eq(self.cd_pix.clk),
+            self.cd_pix_o.rst.eq(self.cd_pix.rst),
+            self.cd_pix5x_o.clk.eq(self.cd_pix5x.clk),
+        ]
+        self.specials += MultiReg(mmcm.locked, self.locked, "sys")
+        self.comb += self._locked.status.eq(self.locked)
+
+
 class S7Clocking(Module, AutoCSR):
     def __init__(self, pads, clkin_freq=148.5e6, split_clocking=False):
         self._mmcm_reset = CSRStorage(reset=1)
