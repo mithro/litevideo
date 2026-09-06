@@ -116,6 +116,75 @@ def align_channel(csr, prefix, slave_taps, iterations=300, settle=10):
     }
 
 
+def _set_taps(csr, prefix, tap, slave_taps):
+    csr.write(f"{prefix}_cap_dly_ctl", 1)                   # reset both IDELAYs
+    for _ in range(slave_taps):
+        csr.write(f"{prefix}_cap_dly_ctl", 8)               # slave +quarter bit
+    for _ in range(tap):
+        csr.write(f"{prefix}_cap_dly_ctl", 2 | 8)           # master and slave together
+
+
+def _best_window(eye):
+    """Centre of the longest circular run of 1s in ``eye``; (centre, length)."""
+    n = len(eye)
+    best_start, best_len = 0, 0
+    for start in range(n):
+        if not eye[start]:
+            continue
+        length = 0
+        while length < n and eye[(start + length) % n]:
+            length += 1
+        if length > best_len:
+            best_start, best_len = start, length
+    return ((best_start + best_len // 2) % n if best_len else 0), best_len
+
+
+def eye_scan(csr, slave_taps, settle=0.03, channels=3):
+    """Align all channels with the channel synchroniser as the eye indicator
+    (the per-channel phase detector's verdict does not track the eye on the
+    sources tried; character sync stays asserted at every tap). First sweep
+    the master tap of all channels together to find the joint window, then
+    refine each channel with the others parked at the joint centre."""
+    import time
+
+    def synced():
+        time.sleep(settle)
+        a = csr.read("chansync_channels_synced")
+        time.sleep(settle)
+        return a & csr.read("chansync_channels_synced")
+
+    joint = []
+    for tap in range(32):
+        for n in range(channels):
+            _set_taps(csr, f"data{n}", tap, slave_taps)
+        joint.append(synced())
+    centre, run = _best_window(joint)
+    result = {"joint_eye": "".join(map(str, joint)), "joint_centre": centre, "joint_run": run}
+    taps = [centre] * channels
+    for n in range(channels):
+        for m in range(channels):
+            _set_taps(csr, f"data{m}", taps[m], slave_taps)
+        eye = []
+        for tap in range(32):
+            _set_taps(csr, f"data{n}", tap, slave_taps)
+            eye.append(synced())
+        c, r = _best_window(eye)
+        if r:
+            taps[n] = c
+        result[f"data{n}"] = {"eye": "".join(map(str, eye)), "tap": taps[n], "run": r}
+    for n in range(channels):
+        _set_taps(csr, f"data{n}", taps[n], slave_taps)
+        csr.write(f"data{n}_cap_phase_reset", 1)
+    time.sleep(0.1)
+    for n in range(channels):
+        result[f"data{n}"].update({"synced": csr.read(f"data{n}_charsync_char_synced"),
+                                   "master_taps": csr.read(f"data{n}_cap_cntvalueout_m"),
+                                   "slave_taps": csr.read(f"data{n}_cap_cntvalueout_s"),
+                                   "ctl_pos": csr.read(f"data{n}_charsync_ctl_pos")})
+    result["chansync"] = csr.read("chansync_channels_synced")
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", default="/dev/ttyAMA0")
@@ -131,6 +200,7 @@ def main():
     b.add_argument("job")
     a = sub.add_parser("align", help="phase-align HDMI input channels data0..data2 (litevideo S7DataCapture)")
     a.add_argument("--slave-taps", type=int, default=5, help="initial slave IDELAY offset (about a quarter bit)")
+    a.add_argument("--eye", action="store_true", help="eye scan with the channel synchroniser as indicator instead of the phase-detector loop")
     args = p.parse_args()
     csrmap = CSRMap(args.csr)
     if args.cmd == "regs":
@@ -158,7 +228,10 @@ def main():
                 time.sleep(float(op[1]))
         print(json.dumps(out))
     elif args.cmd == "align":
-        print(json.dumps({f"data{n}": align_channel(csr, f"data{n}", args.slave_taps) for n in range(3)}))
+        if args.eye:
+            print(json.dumps(eye_scan(csr, args.slave_taps)))
+        else:
+            print(json.dumps({f"data{n}": align_channel(csr, f"data{n}", args.slave_taps) for n in range(3)}))
     else:
         csr.write(args.name, int(args.value, 0))
 

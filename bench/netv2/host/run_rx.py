@@ -94,6 +94,7 @@ def main():
                         "(HDMI2USB-litex-firmware firmware/hdmi_in0.c calibrate_delays)")
     p.add_argument("--report", default=None)
     p.add_argument("--no-load", action="store_true")
+    p.add_argument("--phase-loop", action="store_true", help="HDMI2USB phase-detector loop instead of the channel-sync eye scan")
     p.add_argument("--reprobe", action="store_true", help="force the Pi to re-read the bench EDID before measuring")
     p.add_argument("--tone", action="store_true", help="play a 1 kHz tone from the Pi and check the extracted audio")
     args = p.parse_args()
@@ -119,6 +120,11 @@ def main():
         notes.append("Pi HDMI-A-2 after re-probe: " + pi_hdmi_state())
 
     rig.csr_write("hdmi_rx_control", 0b10)   # HDMI decoding, convert to RGB (a previous run may have left DVI mode)
+    # The source clock may have restarted (re-probe, mode change): reset the
+    # input MMCM and the IDELAYs so the ISERDES/BUFR path starts clean, then align.
+    rig.csr_batch([("w", "clocking_mmcm_reset", 1), ("sleep", 0.1), ("w", "clocking_mmcm_reset", 0), ("sleep", 0.5)]
+                  + [("w", f"data{n}_cap_dly_ctl", 1) for n in range(3)] + [("w", f"data{n}_cap_phase_reset", 1) for n in range(3)])
+    time.sleep(0.5)
     lock = rig.csr_read(["clocking_locked"])["clocking_locked"]
     check("input MMCM locked to the TMDS clock", lock == 1, f"locked={lock}")
     if not lock:
@@ -126,9 +132,12 @@ def main():
         sys.exit(1)
 
     r = rig.ssh(["python3", f"{rig.REMOTE_DIR}/uartbone.py", "--port", rig.UART, "--csr", f"{rig.REMOTE_DIR}/csr.csv",
-                 "align", "--slave-taps", str(args.slave_taps)], timeout=600)
+                 "align", "--slave-taps", str(args.slave_taps)] + ([] if args.phase_loop else ["--eye"]), timeout=600)
     align = json.loads(r.stdout)
-    for ch, res in align.items():
+    if "joint_eye" in align:
+        notes.append(f"eye scan: joint eye {align['joint_eye']} centre {align['joint_centre']} run {align['joint_run']}")
+    for ch in ("data0", "data1", "data2"):
+        res = align[ch]
         check(f"{ch} character sync", res["synced"] == 1, json.dumps(res))
     time.sleep(0.5)
 
