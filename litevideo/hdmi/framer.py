@@ -139,7 +139,10 @@ class HDMIFramer(LiteXModule):
             island.hsync.eq(d.hsync),
             island.vsync.eq(d.vsync),
             island.max_packets.eq(self.max_packets),
-            island.start.eq((since_hs == MIN_CONTROL_PERIOD) & self.enable_islands & ~self.dvi_mode
+            # since_hs is 1 on the cycle after the edge and the encoder emits its
+            # first preamble character one cycle after start, so start at 11 to
+            # put the preamble exactly MIN_CONTROL_PERIOD characters after the edge.
+            island.start.eq((since_hs == MIN_CONTROL_PERIOD - 1) & self.enable_islands & ~self.dvi_mode
                             & ~ecp_line & (self.max_packets != 0)),
         ]
         island_started = Signal()

@@ -66,7 +66,12 @@ def frame_tokens(timing, nframes=1, islands=None, pixels=None):
 
     Video lines: pixels | control | [island] | control | video preamble | video guard band
     Blank lines : control | [island] | control (no preamble/guard band since no DE follows)
-    Returns a list of (c0, c1, c2, de, hsync, vsync)."""
+    Returns a list of (c0, c1, c2, de, hsync, vsync).
+
+    ``islands`` applies to line ``y`` of every frame. The last line of the
+    last frame ends with a video preamble and guard band as if another frame
+    followed (the framer only produces them when a frame does follow), so
+    character-exact comparisons should stop before that tail."""
     ha, hf, hs, hb = timing["hactive"], timing["hfront"], timing["hsync"], timing["hback"]
     va, vf, vs, vb = timing["vactive"], timing["vfront"], timing["vsync"], timing["vback"]
     vtotal = va + vf + vs + vb
