@@ -6,6 +6,11 @@ memory, swap, CPU and IO limits (`systemd.resource-control(5)`):
 
     uv run scripts/limited.py -- <command>
 
+`scripts/build_bench.py <bench> <vivado|yosys|openxc7> [-- bench args]`
+wraps the three flows for the NeTV2 benches (sources the Vivado settings
+or `scripts/openxc7-env.sh`, picks the build directory, runs under the
+scope).
+
 Flows, in the order they are brought up:
 
 1. **Vivado** (2025.2): LiteX `--toolchain vivado`.
