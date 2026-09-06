@@ -23,7 +23,7 @@ classifiers = [
 dependencies = ["migen", "litex", "litedram"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pillow", "numpy"]
+dev = ["pytest>=8", "pillow", "numpy", "litex-boards", "pyserial"]
 
 [project.urls]
 Homepage = "https://github.com/enjoy-digital/litevideo"
@@ -42,6 +42,7 @@ litevideo = ["terminal/*.bin", "terminal/*.jpg"]
 migen    = { git = "https://github.com/mithro/migen.git", rev = "4c2ae8dfeea37f235b52acb8166f12acaaae4f7c" }
 litex    = { git = "https://github.com/enjoy-digital/litex.git", tag = "2026.04" }
 litedram = { git = "https://github.com/enjoy-digital/litedram.git", tag = "2026.04" }
+litex-boards = { git = "https://github.com/litex-hub/litex-boards.git", tag = "2026.04" }
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

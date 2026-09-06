@@ -273,12 +273,14 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "litex-boards" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "pyserial" },
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pytest", version = "9.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
@@ -287,9 +289,11 @@ dev = [
 requires-dist = [
     { name = "litedram", git = "https://github.com/enjoy-digital/litedram.git?tag=2026.04" },
     { name = "litex", git = "https://github.com/enjoy-digital/litex.git?tag=2026.04" },
+    { name = "litex-boards", marker = "extra == 'dev'", git = "https://github.com/litex-hub/litex-boards.git?tag=2026.04" },
     { name = "migen", git = "https://github.com/mithro/migen.git?rev=4c2ae8dfeea37f235b52acb8166f12acaaae4f7c" },
     { name = "numpy", marker = "extra == 'dev'" },
     { name = "pillow", marker = "extra == 'dev'" },
+    { name = "pyserial", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]
@@ -304,6 +308,14 @@ dependencies = [
     { name = "pyserial" },
     { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "requests", version = "2.34.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+
+[[package]]
+name = "litex-boards"
+version = "2026.4"
+source = { git = "https://github.com/litex-hub/litex-boards.git?tag=2026.04#11ea1db74648711eec7ae166f939b42322890c5a" }
+dependencies = [
+    { name = "litex" },
 ]
 
 [[package]]
