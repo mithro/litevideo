@@ -47,3 +47,10 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
 3. Decide whether I should tell the netv2-fpga session about the three
    spec divergences (ECC polynomial, ASP subpacket layout, channel 0 guard
    band) or whether you will.
+- **Peer observation (afternoon).** With the netv2-fpga fabric-loopback
+  bitstream driving 720p on `hdmi_out` 0, the Magewell stays at its no-signal
+  default: the physical output path (OSERDES, pads, cable, sink) is
+  unverified by that tree. To check in phase 2: which connector is cabled,
+  `Inverted()` handling on the `hdmi_out` 0 clock pair, clock-lane pattern,
+  OSERDES reset/OCE sequencing, and TMDS signal integrity. rpi5 PCIe FPC is
+  not connected (LTSSM stuck in Detect), which does not affect this work.
