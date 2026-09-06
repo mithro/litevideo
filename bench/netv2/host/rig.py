@@ -80,6 +80,13 @@ def csr_write(name, value):
     ssh(["python3", f"{REMOTE_DIR}/uartbone.py", "--port", UART, "--csr", f"{REMOTE_DIR}/csr.csv", "write", name, f"{value:#x}"])
 
 
+def csr_drain(data, valid, pop, count):
+    """Pop up to ``count`` words from a FIFO exposed as data/valid/pop CSRs (one ssh session)."""
+    r = ssh(["python3", f"{REMOTE_DIR}/uartbone.py", "--port", UART, "--csr", f"{REMOTE_DIR}/csr.csv",
+             "drain", data, valid, pop, str(count)], timeout=600)
+    return json.loads(r.stdout)
+
+
 def capture_frame(local_png, width=1280, height=720, frames=3):
     """Grab ``frames`` frames from the Magewell and keep the last one as PNG."""
     ssh(["ffmpeg", "-loglevel", "error", "-y", "-f", "v4l2", "-video_size", f"{width}x{height}",

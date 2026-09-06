@@ -86,6 +86,8 @@ def main():
     sub.add_parser("regs")
     r = sub.add_parser("read"); r.add_argument("names", nargs="+")
     w = sub.add_parser("write"); w.add_argument("name"); w.add_argument("value")
+    d = sub.add_parser("drain", help="pop up to COUNT words from a FIFO exposed as data/valid/pop CSRs")
+    d.add_argument("data"); d.add_argument("valid"); d.add_argument("pop"); d.add_argument("count", type=int)
     args = p.parse_args()
     csrmap = CSRMap(args.csr)
     if args.cmd == "regs":
@@ -95,6 +97,12 @@ def main():
     csr = CSR(UARTBone(args.port, args.baudrate), csrmap)
     if args.cmd == "read":
         print(json.dumps({n: csr.read(n) for n in args.names}))
+    elif args.cmd == "drain":
+        words = []
+        while len(words) < args.count and csr.read(args.valid):
+            words.append(csr.read(args.data))
+            csr.write(args.pop, 1)
+        print(json.dumps(words))
     else:
         csr.write(args.name, int(args.value, 0))
 

@@ -33,6 +33,37 @@ def expected_bars_crc(hres=1280, vres=720):
     return frame_crc(row * vres)
 
 
+def check_tone(samples, fs=48000, freq=1000.0):
+    """samples: [(24-bit value, channel, b)]. Left/right must alternate and be
+    equal, every value must be a ROM entry, block starts every 192 frames, and
+    the spectrum must peak at ``freq``."""
+    import numpy as np
+    from litevideo.hdmi.audio.model import tone_table
+    if len(samples) < 200:
+        return False, f"only {len(samples)} samples drained"
+    table = set(tone_table())
+    chans = [c for _, c, _ in samples]
+    start = chans.index(0)
+    samples = samples[start:]
+    frames = [(samples[i][0], samples[i + 1][0], samples[i][2]) for i in range(0, len(samples) - 1, 2)]
+    if any(samples[i][1] != (i & 1) for i in range(len(samples))):
+        return False, "channels do not alternate L/R"
+    if any(l != r for l, r, _ in frames):
+        return False, "left != right"
+    bad = [l for l, _, _ in frames if l not in table]
+    if bad:
+        return False, f"{len(bad)} values not in the ROM, e.g. {bad[0]:#08x}"
+    bstarts = [i for i, (_, _, b) in enumerate(frames) if b]
+    if len(bstarts) >= 2 and any(b - a != 192 for a, b in zip(bstarts, bstarts[1:])):
+        return False, f"block starts at {bstarts}"
+    x = np.array([l - (1 << 24) if l & (1 << 23) else l for l, _, _ in frames], dtype=float)
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+    peak = int(np.argmax(spec[1:]) + 1)
+    peak_hz = peak * fs / len(x)
+    ok = abs(peak_hz - freq) <= fs / len(x)
+    return ok, f"{len(frames)} frames, peak {peak_hz:.0f} Hz (bin {fs / len(x):.0f} Hz), block starts {bstarts[:3]}"
+
+
 STATUS = ["hdmi_tx_status", "hdmi_tx_island_count", "hdmi_tx_frame_count", "main_tx_frame_crc", "main_tx_frames",
           "main_rx_periods_0", "main_rx_periods_1", "main_rx_periods_2", "main_rx_periods_3", "main_rx_islands", "main_rx_packets",
           "main_rx_ecc_errors", "main_rx_errors", "main_rx_last_header", "main_rx_frame_crc", "main_rx_frames"]
@@ -115,6 +146,23 @@ def main():
     d2 = rig.csr_read(["main_rx_islands"])
     check("DVI mode stops islands", d1["main_rx_islands"] == d2["main_rx_islands"], f"{d1['main_rx_islands']} -> {d2['main_rx_islands']}")
     rig.csr_write("hdmi_tx_control", 0b1001)
+
+    # Audio: ACR, InfoFrame, and the extracted tone.
+    au = rig.csr_read(["main_audio_n", "main_audio_cts", "main_audio_infoframe_rx", "main_audio_asps",
+                       "main_audio_acrs", "main_audio_samples", "main_audio_dropped",
+                       "hdmi_tx_audio_frames", "hdmi_tx_audio_overruns"])
+    check("ACR N/CTS received", (au["main_audio_n"], au["main_audio_cts"]) == (6144, 74250),
+          f"N={au['main_audio_n']} CTS={au['main_audio_cts']} (acr packets {au['main_audio_acrs']})")
+    inf = au["main_audio_infoframe_rx"]
+    cc, ct, ss, sf, ca, valid = inf & 7, (inf >> 3) & 0xF, (inf >> 7) & 3, (inf >> 9) & 7, (inf >> 12) & 0xFF, (inf >> 20) & 1
+    check("Audio InfoFrame received (2ch, 48 kHz, 24 bit)", (cc, sf, ss, valid) == (1, 3, 3, 1),
+          f"cc={cc} ct={ct} sf={sf} ss={ss} ca={ca} valid={valid}")
+    check("no audio drops", au["main_audio_dropped"] == 0 and au["hdmi_tx_audio_overruns"] == 0,
+          f"dropped={au['main_audio_dropped']} overruns={au['hdmi_tx_audio_overruns']} frames={au['hdmi_tx_audio_frames']} asps={au['main_audio_asps']}")
+    words = rig.csr_drain("main_audio_sample_data", "main_audio_sample_valid", "main_audio_sample_pop", 512)
+    samples = [(w & 0xFFFFFF, (w >> 24) & 7, (w >> 27) & 1) for w in words if w >> 31]
+    ok, detail = check_tone(samples)
+    check("extracted tone is the 1 kHz ROM sine", ok, detail)
 
     report = args.report or os.path.join("doc", "reports", time.strftime("%Y-%m-%d") + "-netv2-loopback.md")
     os.makedirs(os.path.dirname(report), exist_ok=True)

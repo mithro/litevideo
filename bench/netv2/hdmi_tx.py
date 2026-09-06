@@ -40,7 +40,7 @@ class HDMITxSoC(BenchSoC):
             "v_active": 720,  "v_blanking": 30,  "v_sync_offset": 5,   "v_sync_width": 5,
         }))
         self.bars = ClockDomainsRenamer("pix")(ColorBarsPattern())
-        self.hdmi_tx = HDMITransmitter(default_vic=VIC_720P60)
+        self.hdmi_tx = HDMITransmitter(default_vic=VIC_720P60, with_audio=True, pix_clk_freq=PIX_CLK_FREQ, fs=48000, tone_freq=1000.0)
         self.comb += [self.vtg.source.connect(self.bars.vtg_sink), self.bars.source.connect(self.hdmi_tx.sink)]
 
         # Clock lane: fixed 0000011111 pattern at the pixel rate (litevideo

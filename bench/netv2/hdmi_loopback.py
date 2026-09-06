@@ -16,13 +16,15 @@ also serves as a tier-T4 source.
 
 from migen import *
 from migen.genlib.cdc import MultiReg
+from migen.genlib.fifo import AsyncFIFO
 
 from litex.gen import *
-from litex.soc.interconnect.csr import CSRStatus
+from litex.soc.interconnect.csr import CSRStatus, CSRStorage, CSRField
 
 from litevideo.hdmi.common import *
 from litevideo.hdmi.period import HDMIPeriodDecoder
 from litevideo.hdmi.island import DataIslandDecoder
+from litevideo.hdmi.audio.extract import AudioExtract
 
 from bench.netv2.common import bench_main
 from bench.netv2.frame_crc import FrameCRC
@@ -45,6 +47,47 @@ class HDMILoopbackSoC(HDMITxSoC):
             dec.nibble0.eq(rx.nibble0),
             dec.nibble1.eq(rx.nibble1),
             dec.nibble2.eq(rx.nibble2),
+        ]
+
+        # Audio extraction: samples into a sys-domain FIFO drained over CSRs.
+        self.rx_audio = ext = ClockDomainsRenamer("pix")(AudioExtract())
+        self.comb += dec.source.connect(ext.sink)
+        fifo = ClockDomainsRenamer({"write": "pix", "read": "sys"})(AsyncFIFO(width=32, depth=512))
+        self.audio_fifo = fifo
+        src = ext.sample_source
+        self.comb += [
+            fifo.din.eq(Cat(src.sample, src.channel, src.b, src.c, src.p, src.v, C(1, 1))),
+            fifo.we.eq(src.valid & fifo.writable),
+        ]
+        self.audio_sample_data  = CSRStatus(32, description="Extracted subframe: sample[23:0], channel[26:24], b[27], c[28], p[29], v[30], 1[31].")
+        self.audio_sample_valid = CSRStatus(1, description="The sample FIFO has data.")
+        self.audio_sample_pop   = CSRStorage(1, description="Write to pop the sample FIFO.")
+        self.comb += [
+            self.audio_sample_data.status.eq(fifo.dout),
+            self.audio_sample_valid.status.eq(fifo.readable),
+            fifo.re.eq(self.audio_sample_pop.re),
+        ]
+        self.audio_n   = CSRStatus(20, description="ACR N received.")
+        self.audio_cts = CSRStatus(20, description="ACR CTS received.")
+        self.audio_infoframe_rx = CSRStatus(fields=[
+            CSRField("cc", 3), CSRField("ct", 4), CSRField("ss", 2), CSRField("sf", 3), CSRField("ca", 8), CSRField("valid", 1)])
+        self.audio_asps    = CSRStatus(32, description="Audio Sample Packets extracted.")
+        self.audio_acrs    = CSRStatus(32, description="ACR packets extracted.")
+        self.audio_samples = CSRStatus(32, description="Subframes extracted.")
+        self.audio_dropped = CSRStatus(32, description="Packets dropped on ECC error.")
+        self.specials += [
+            MultiReg(ext.n,   self.audio_n.status),
+            MultiReg(ext.cts, self.audio_cts.status),
+            MultiReg(ext.infoframe.cc, self.audio_infoframe_rx.fields.cc),
+            MultiReg(ext.infoframe.ct, self.audio_infoframe_rx.fields.ct),
+            MultiReg(ext.infoframe.ss, self.audio_infoframe_rx.fields.ss),
+            MultiReg(ext.infoframe.sf, self.audio_infoframe_rx.fields.sf),
+            MultiReg(ext.infoframe.ca, self.audio_infoframe_rx.fields.ca),
+            MultiReg(ext.infoframe_valid, self.audio_infoframe_rx.fields.valid),
+            MultiReg(ext.asp_count,    self.audio_asps.status),
+            MultiReg(ext.acr_count,    self.audio_acrs.status),
+            MultiReg(ext.sample_count, self.audio_samples.status),
+            MultiReg(ext.dropped_count, self.audio_dropped.status),
         ]
 
         self.rx_frame_crc = ClockDomainsRenamer("pix")(FrameCRC())

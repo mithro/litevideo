@@ -26,6 +26,33 @@ from bench.netv2.host.run_loopback import BARS
 TOLERANCE = 40
 
 
+def check_audio_wav(path, freq=1000.0, tolerance_hz=5.0, min_snr_db=30.0):
+    """Both channels of a 16-bit stereo WAV must peak at ``freq`` with the
+    second-highest spectral line at least ``min_snr_db`` below the peak."""
+    import wave
+    import numpy as np
+    with wave.open(path, "rb") as w:
+        rate, nch, n = w.getframerate(), w.getnchannels(), w.getnframes()
+        data = np.frombuffer(w.readframes(n), dtype="<i2").reshape(-1, nch).astype(float)
+    details = []
+    ok = True
+    for ch in range(nch):
+        x = data[:, ch]
+        x = x[len(x) // 4:]                              # skip start-up
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+        spec[0] = 0
+        peak = int(np.argmax(spec))
+        peak_hz = peak * rate / len(x)
+        rest = spec.copy()
+        lo, hi = max(0, peak - 5), peak + 6
+        rest[lo:hi] = 0
+        snr = 20 * np.log10(spec[peak] / max(rest.max(), 1e-9))
+        rms = np.sqrt(np.mean(x ** 2)) / 32768
+        details.append(f"ch{ch}: peak {peak_hz:.1f} Hz, {snr:.0f} dB above the next line, rms {rms:.3f} FS")
+        ok = ok and abs(peak_hz - freq) <= tolerance_hz and snr >= min_snr_db
+    return ok, f"{rate} Hz, {n} frames; " + "; ".join(details)
+
+
 def sample_bars(png, width=1280, height=720):
     img = Image.open(png).convert("RGB")
     got = []
@@ -74,6 +101,13 @@ def main():
         else:
             check(f"{mode} mode colour bars captured", ok, detail)
     rig.csr_write("hdmi_tx_control", 0b1001)
+
+    # Audio: the Magewell's ALSA capture of the embedded 1 kHz tone.
+    wav = os.path.join(outdir, f"{time.strftime('%Y-%m-%d')}-netv2-tx-audio.wav")
+    time.sleep(1.0)
+    rig.capture_audio(wav, seconds=2)
+    ok, detail = check_audio_wav(wav)
+    check("Magewell audio capture: 1 kHz tone on both channels", ok, detail)
 
     report = args.report or os.path.join("doc", "reports", time.strftime("%Y-%m-%d") + "-netv2-tx.md")
     rig.report(report, "NeTV2 tier T4: HDMI transmitter into the Magewell capture", bitstream, rows, notes)
