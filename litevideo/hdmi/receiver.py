@@ -17,15 +17,14 @@ provides:
   quantization range and VIC, with the InfoFrame checksum verified;
 * timing measurement: active pixels per line, active lines per frame, total
   characters per line and lines per frame;
-* audio extraction (``with_audio``): samples into a ``sys``-domain FIFO
-  readable over CSRs, N/CTS and Audio InfoFrame latches.
+* audio extraction (``with_audio``): N/CTS and Audio InfoFrame latches, and
+  a one-shot ``AudioSampleCapture`` FIFO readable over CSRs (``audio_capture_*``).
 
 Runs in the ``pix`` domain; CSRs are in ``sys``.
 """
 
 from migen import *
 from migen.genlib.cdc import MultiReg
-from migen.genlib.fifo import AsyncFIFO
 
 from litex.gen import *
 from litex.soc.interconnect import stream
@@ -36,6 +35,7 @@ from litevideo.hdmi.common import *
 from litevideo.hdmi.period import HDMIPeriodDecoder
 from litevideo.hdmi.island import DataIslandDecoder
 from litevideo.hdmi.audio.extract import AudioExtract
+from litevideo.hdmi.audio.capture import AudioSampleCapture
 
 
 class TimingMeasure(LiteXModule):
@@ -192,21 +192,8 @@ class HDMIReceiver(LiteXModule):
     def add_audio(self):
         self.audio = ext = ClockDomainsRenamer("pix")(AudioExtract())
         self.comb += self.island.source.connect(ext.sink)
-        fifo = ClockDomainsRenamer({"write": "pix", "read": "sys"})(AsyncFIFO(width=32, depth=512))
-        self.audio_fifo = fifo
-        src = ext.sample_source
-        self.comb += [
-            fifo.din.eq(Cat(src.sample, src.channel, src.b, src.c, src.p, src.v, C(1, 1))),
-            fifo.we.eq(src.valid & fifo.writable),
-        ]
-        self.audio_sample_data  = CSRStatus(32, description="Extracted subframe: sample[23:0], channel[26:24], b[27], c[28], p[29], v[30], 1[31].")
-        self.audio_sample_valid = CSRStatus(1, description="The sample FIFO has data.")
-        self.audio_sample_pop   = CSRStorage(1, description="Write to pop the sample FIFO.")
-        self.comb += [
-            self.audio_sample_data.status.eq(fifo.dout),
-            self.audio_sample_valid.status.eq(fifo.readable),
-            fifo.re.eq(self.audio_sample_pop.re),
-        ]
+        self.audio_capture = AudioSampleCapture()
+        self.comb += ext.sample_source.connect(self.audio_capture.sink)
         self.audio_n   = CSRStatus(20, description="ACR N received.")
         self.audio_cts = CSRStatus(20, description="ACR CTS received.")
         self.audio_infoframe = CSRStatus(fields=[

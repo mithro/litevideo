@@ -21,6 +21,7 @@ import datetime
 import hashlib
 import json
 import os
+import time
 import shlex
 import subprocess
 
@@ -78,6 +79,13 @@ def csr_read(names):
 
 def csr_write(name, value):
     ssh(["python3", f"{REMOTE_DIR}/uartbone.py", "--port", UART, "--csr", f"{REMOTE_DIR}/csr.csv", "write", name, f"{value:#x}"])
+
+
+def csr_capture(prefix, count=512, settle=0.05):
+    """Arm a one-shot AudioSampleCapture (CSRs ``<prefix>_arm/_sample_*``), wait, drain."""
+    csr_write(f"{prefix}_arm", 1)
+    time.sleep(settle)
+    return csr_drain(f"{prefix}_sample_data", f"{prefix}_sample_valid", f"{prefix}_sample_pop", count)
 
 
 def csr_drain(data, valid, pop, count):

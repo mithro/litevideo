@@ -16,7 +16,6 @@ also serves as a tier-T4 source.
 
 from migen import *
 from migen.genlib.cdc import MultiReg
-from migen.genlib.fifo import AsyncFIFO
 
 from litex.gen import *
 from litex.soc.interconnect.csr import CSRStatus, CSRStorage, CSRField
@@ -25,6 +24,7 @@ from litevideo.hdmi.common import *
 from litevideo.hdmi.period import HDMIPeriodDecoder
 from litevideo.hdmi.island import DataIslandDecoder
 from litevideo.hdmi.audio.extract import AudioExtract
+from litevideo.hdmi.audio.capture import AudioSampleCapture
 
 from bench.netv2.common import bench_main
 from bench.netv2.frame_crc import FrameCRC
@@ -49,24 +49,11 @@ class HDMILoopbackSoC(HDMITxSoC):
             dec.nibble2.eq(rx.nibble2),
         ]
 
-        # Audio extraction: samples into a sys-domain FIFO drained over CSRs.
+        # Audio extraction: one-shot sample capture drained over CSRs.
         self.rx_audio = ext = ClockDomainsRenamer("pix")(AudioExtract())
         self.comb += dec.source.connect(ext.sink)
-        fifo = ClockDomainsRenamer({"write": "pix", "read": "sys"})(AsyncFIFO(width=32, depth=512))
-        self.audio_fifo = fifo
-        src = ext.sample_source
-        self.comb += [
-            fifo.din.eq(Cat(src.sample, src.channel, src.b, src.c, src.p, src.v, C(1, 1))),
-            fifo.we.eq(src.valid & fifo.writable),
-        ]
-        self.audio_sample_data  = CSRStatus(32, description="Extracted subframe: sample[23:0], channel[26:24], b[27], c[28], p[29], v[30], 1[31].")
-        self.audio_sample_valid = CSRStatus(1, description="The sample FIFO has data.")
-        self.audio_sample_pop   = CSRStorage(1, description="Write to pop the sample FIFO.")
-        self.comb += [
-            self.audio_sample_data.status.eq(fifo.dout),
-            self.audio_sample_valid.status.eq(fifo.readable),
-            fifo.re.eq(self.audio_sample_pop.re),
-        ]
+        self.audio_capture = AudioSampleCapture()
+        self.comb += ext.sample_source.connect(self.audio_capture.sink)
         self.audio_n   = CSRStatus(20, description="ACR N received.")
         self.audio_cts = CSRStatus(20, description="ACR CTS received.")
         self.audio_infoframe_rx = CSRStatus(fields=[

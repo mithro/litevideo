@@ -20,17 +20,46 @@ import time
 
 from bench.netv2.host import rig
 from bench.netv2.frame_crc import frame_crc
+from litevideo.csc.convert import PixelFormat, convert_line
 
 # ColorBarsPattern: 8 bars of hres/8 pixels; LiteX's colours (video.py).
 BARS = [(0xff, 0xff, 0xff), (0xff, 0xff, 0x00), (0x00, 0xff, 0xff), (0x00, 0xff, 0x00),
         (0xff, 0x00, 0xff), (0xff, 0x00, 0x00), (0x00, 0x00, 0xff), (0x00, 0x00, 0x00)]
 
 
+def bars_row(hres=1280):
+    return [BARS[min(7, x // (hres // 8))] for x in range(hres)]
+
+
 def expected_bars_crc(hres=1280, vres=720):
-    row = []
-    for x in range(hres):
-        row.append(BARS[min(7, x // (hres // 8))])
-    return frame_crc(row * vres)
+    return frame_crc(bars_row(hres) * vres)
+
+
+def expected_converted_crc(fmt_out, colorimetry, rgb_out_limited, ycc_limited, hres=1280, vres=720):
+    """CRC of the bars as they appear on the wire after the transmitter's
+    PixelFormatConverter (FrameCRC hashes (r, g, b) = wire channels (2, 1, 0))."""
+    wire_in = [(b, g, r) for r, g, b in bars_row(hres)]
+    row = convert_line(wire_in, PixelFormat.RGB, fmt_out, colorimetry, 0, rgb_out_limited, ycc_limited)
+    return frame_crc([(c2, c1, c0) for c0, c1, c2 in row] * vres)
+
+
+def avi_storage(y=0, c=0, q=2, vic=4, m=2, r=8):
+    """avi_config storage word, field offsets taken from the transmitter's CSR definition."""
+    from litevideo.hdmi.transmitter import HDMITransmitter
+    f = HDMITransmitter(default_vic=vic).avi_config.fields
+    return (y << f.y.offset) | (c << f.c.offset) | (m << f.m.offset) | (r << f.r.offset) | (q << f.q.offset) | (vic << f.vic.offset)
+
+
+# (name, y, c, q) -> converter controls (fmt_out, colorimetry, rgb_out_limited, ycc_limited)
+FORMATS = [
+    ("RGB full (default)",      (0, 0, 2), (PixelFormat.RGB, 2, 0, 1)),
+    ("RGB limited (Q=1)",       (0, 0, 1), (PixelFormat.RGB, 2, 1, 1)),
+    ("RGB default Q on 720p",   (0, 0, 0), (PixelFormat.RGB, 2, 1, 1)),
+    ("YCbCr 4:4:4 BT.709",      (2, 2, 0), (PixelFormat.YCBCR444, 2, 1, 1)),
+    ("YCbCr 4:4:4 BT.601",      (2, 1, 0), (PixelFormat.YCBCR444, 1, 1, 1)),
+    ("YCbCr 4:2:2 BT.709",      (1, 2, 0), (PixelFormat.YCBCR422, 2, 1, 1)),
+    ("YCbCr 4:2:2 C default",   (1, 0, 0), (PixelFormat.YCBCR422, 2, 1, 1)),
+]
 
 
 def check_tone(samples, fs=48000, freq=1000.0):
@@ -112,30 +141,34 @@ def main():
     check("rx packets advance", delta("main_rx_packets") > 0, f"+{delta('main_rx_packets')} packets")
     check("no ECC errors", delta("main_rx_ecc_errors") == 0, f"+{delta('main_rx_ecc_errors')}")
     check("no island errors", delta("main_rx_errors") == 0, f"+{delta('main_rx_errors')}")
-    check("last packet is AVI InfoFrame", (b["main_rx_last_header"] & 0xFF) == 0x82, f"header={b['main_rx_last_header']:#08x}")
+    last = b["main_rx_last_header"] & 0xFF
+    check("last packet is a known type", last in (0x82, 0x02, 0x01, 0x84, 0x03),
+          f"header={b['main_rx_last_header']:#08x} ({ {0x82: 'AVI', 0x02: 'ASP', 0x01: 'ACR', 0x84: 'Audio IF', 0x03: 'GCP'}.get(last, '?')})")
     exp = expected_bars_crc()
     check("tx frame CRC = colour bars", b["main_tx_frame_crc"] == exp, f"{b['main_tx_frame_crc']:#010x} vs {exp:#010x}")
     check("rx frame CRC = tx frame CRC", b["main_rx_frame_crc"] == b["main_tx_frame_crc"], f"{b['main_rx_frame_crc']:#010x}")
     hist = {"video": (delta("main_rx_periods_1") >> 16) & 0xFFFF, "island": delta("main_rx_periods_3") & 0xFFFF}
     check("period histogram has VIDEO and DATA_ISLAND", hist["video"] > 0 and hist["island"] > 0, str(hist))
 
-    # Packets per frame: 1 (AVI) normally, 2 (GCP + AVI, in one island) while
-    # AVMUTE is set. The GCP is scheduled before the AVI, so "last header" stays
-    # the AVI; the packet/frame ratio is the robust observable.
+    # Non-audio packets per frame: AVI + Audio InfoFrame = 2 normally, 3 (plus a
+    # GCP) while AVMUTE is set. Audio Sample and Clock Regeneration packets are
+    # subtracted using the extractor's counters, so the ratio is the robust
+    # observable whatever the audio rate.
     def packets_per_frame():
-        x = rig.csr_read(["hdmi_tx_frame_count", "main_rx_packets"])
+        names = ["hdmi_tx_frame_count", "main_rx_packets", "main_audio_asps", "main_audio_acrs"]
+        x = rig.csr_read(names)
         time.sleep(1.0)
-        y = rig.csr_read(["hdmi_tx_frame_count", "main_rx_packets"])
-        frames = (y["hdmi_tx_frame_count"] - x["hdmi_tx_frame_count"]) & 0xFFFFFFFF
-        pkts = (y["main_rx_packets"] - x["main_rx_packets"]) & 0xFFFFFFFF
-        return pkts / max(frames, 1)
+        y = rig.csr_read(names)
+        d = {n: (y[n] - x[n]) & 0xFFFFFFFF for n in names}
+        other = d["main_rx_packets"] - d["main_audio_asps"] - d["main_audio_acrs"]
+        return other / max(d["hdmi_tx_frame_count"], 1)
 
     r1 = packets_per_frame()
-    check("one packet (AVI) per frame", 0.9 <= r1 <= 1.1, f"{r1:.2f} packets/frame")
+    check("two non-audio packets (AVI, Audio InfoFrame) per frame", 1.9 <= r1 <= 2.1, f"{r1:.2f} packets/frame")
     rig.csr_write("hdmi_tx_control", 0b1101)
     time.sleep(0.5)
     r2 = packets_per_frame()
-    check("AVMUTE adds a GCP per frame", 1.9 <= r2 <= 2.1, f"{r2:.2f} packets/frame")
+    check("AVMUTE adds a GCP per frame", 2.9 <= r2 <= 3.1, f"{r2:.2f} packets/frame")
     rig.csr_write("hdmi_tx_control", 0b1001)
 
     # DVI mode: islands stop.
@@ -147,19 +180,40 @@ def main():
     check("DVI mode stops islands", d1["main_rx_islands"] == d2["main_rx_islands"], f"{d1['main_rx_islands']} -> {d2['main_rx_islands']}")
     rig.csr_write("hdmi_tx_control", 0b1001)
 
-    # Audio: ACR, InfoFrame, and the extracted tone.
-    au = rig.csr_read(["main_audio_n", "main_audio_cts", "main_audio_infoframe_rx", "main_audio_asps",
-                       "main_audio_acrs", "main_audio_samples", "main_audio_dropped",
-                       "hdmi_tx_audio_frames", "hdmi_tx_audio_overruns"])
+    # Pixel formats: the wire-side frame CRC follows the AVI configuration.
+    for name, (y, c, q), ctrl in FORMATS:
+        rig.csr_write("hdmi_tx_avi_config", avi_storage(y, c, q))
+        time.sleep(0.2)
+        got = rig.csr_read(["main_rx_frame_crc", "main_tx_frame_crc"])
+        exp = expected_converted_crc(*ctrl)
+        check(f"format {name}: rx frame CRC = model", got["main_rx_frame_crc"] == exp,
+              f"{got['main_rx_frame_crc']:#010x} vs {exp:#010x} (tx input {got['main_tx_frame_crc']:#010x})")
+    rig.csr_write("hdmi_tx_avi_config", avi_storage())
+
+    # Audio: ACR, InfoFrame, lossless steady state (overruns do accumulate while
+    # DVI mode stops the islands above, so count over a window), the tone.
+    au_names = ["main_audio_n", "main_audio_cts", "main_audio_infoframe_rx", "main_audio_asps",
+                "main_audio_acrs", "main_audio_samples", "main_audio_dropped",
+                "hdmi_tx_audio_frames", "hdmi_tx_audio_overruns"]
+    time.sleep(0.5)
+    au0 = rig.csr_read(au_names)
+    t_au = time.monotonic()
+    time.sleep(5.0)
+    au = rig.csr_read(au_names)
+    dt_au = time.monotonic() - t_au
+    dau = {n: (au[n] - au0[n]) & 0xFFFFFFFF for n in au_names}
     check("ACR N/CTS received", (au["main_audio_n"], au["main_audio_cts"]) == (6144, 74250),
           f"N={au['main_audio_n']} CTS={au['main_audio_cts']} (acr packets {au['main_audio_acrs']})")
     inf = au["main_audio_infoframe_rx"]
     cc, ct, ss, sf, ca, valid = inf & 7, (inf >> 3) & 0xF, (inf >> 7) & 3, (inf >> 9) & 7, (inf >> 12) & 0xFF, (inf >> 20) & 1
     check("Audio InfoFrame received (2ch, 48 kHz, 24 bit)", (cc, sf, ss, valid) == (1, 3, 3, 1),
           f"cc={cc} ct={ct} sf={sf} ss={ss} ca={ca} valid={valid}")
-    check("no audio drops", au["main_audio_dropped"] == 0 and au["hdmi_tx_audio_overruns"] == 0,
-          f"dropped={au['main_audio_dropped']} overruns={au['hdmi_tx_audio_overruns']} frames={au['hdmi_tx_audio_frames']} asps={au['main_audio_asps']}")
-    words = rig.csr_drain("main_audio_sample_data", "main_audio_sample_valid", "main_audio_sample_pop", 512)
+    check("audio lossless in steady state", dau["main_audio_dropped"] == 0 and dau["hdmi_tx_audio_overruns"] == 0
+          and abs(dau["main_audio_samples"] - 2 * dau["hdmi_tx_audio_frames"]) <= dau["hdmi_tx_audio_frames"] // 100,
+          f"over {dt_au:.1f} s: frames +{dau['hdmi_tx_audio_frames']} ({dau['hdmi_tx_audio_frames']/dt_au:.0f}/s), "
+          f"subframes extracted +{dau['main_audio_samples']}, asps +{dau['main_audio_asps']}, acrs +{dau['main_audio_acrs']} "
+          f"({dau['main_audio_acrs']/dt_au:.0f}/s), overruns +{dau['hdmi_tx_audio_overruns']}, dropped +{dau['main_audio_dropped']}")
+    words = rig.csr_capture("audio_capture")
     samples = [(w & 0xFFFFFF, (w >> 24) & 7, (w >> 27) & 1) for w in words if w >> 31]
     ok, detail = check_tone(samples)
     check("extracted tone is the 1 kHz ROM sine", ok, detail)
