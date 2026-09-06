@@ -40,7 +40,7 @@ def video_out_layout(dw):
 def phy_layout(mode):
     if mode == "raw":
         param_layout = frame_timing_layout # not used
-        payload_layout = [("c0", 10), ("c1", 10), ("c2", 11)]
+        payload_layout = [("c0", 10), ("c1", 10), ("c2", 10)]  # three 10-bit TMDS characters (was 11: typo, truncated by the PHYs)
         return stream.EndpointDescription(payload_layout, param_layout)
     else:
         param_layout = frame_timing_layout
