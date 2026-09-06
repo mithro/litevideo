@@ -66,5 +66,10 @@ def prepare_platform(platform):
     ensure_chipdb_symlink(platform)
 
 
-def prepare_soc(soc):
+def prepare_soc(soc, nodsp=True):
     patch_yosys_template(soc)
+    if nodsp:
+        # nextpnr-xilinx's DSP48E1 support mis-implements the colour matrix
+        # multiplies (blue output became blue AND red on hardware); keep the
+        # multipliers in LUTs until that is understood.
+        soc.platform.toolchain._synth_opts += " -nodsp"

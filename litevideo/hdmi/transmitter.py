@@ -59,7 +59,7 @@ def _field(storage_copy, field):
 
 class HDMITransmitter(LiteXModule):
     def __init__(self, default_vic=4, extra_packet_sinks=0, with_audio=False, pix_clk_freq=None, fs=48000, tone_freq=1000.0,
-                 input_format=PixelFormat.RGB, input_rgb_limited=False):
+                 input_format=PixelFormat.RGB, input_rgb_limited=False, with_converter=True):
         self.sink   = stream.Endpoint(video_data_layout)
         self.source = stream.Endpoint(raw_layout)
 
@@ -102,20 +102,25 @@ class HDMITransmitter(LiteXModule):
         self.comb += framer.source.connect(self.source)
 
         # Pixel format conversion in front of the framer (valid delayed alongside).
-        self.converter = conv = ClockDomainsRenamer("pix")(PixelFormatConverter())
+        # with_converter=False sends the sink to the framer unchanged (the AVI
+        # InfoFrame then has to be configured to match the input).
         self.avi_rules = rules = ClockDomainsRenamer("pix")(AVIFormatControl())
-        valid_d = Signal(conv.latency)
-        self.sync.pix += valid_d.eq(Cat(self.sink.valid, valid_d))
-        self.comb += [
-            self.sink.ready.eq(1),
-            conv.sink.de.eq(self.sink.de), conv.sink.hsync.eq(self.sink.hsync), conv.sink.vsync.eq(self.sink.vsync),
-            conv.sink.r.eq(self.sink.r), conv.sink.g.eq(self.sink.g), conv.sink.b.eq(self.sink.b),
-            framer.sink.valid.eq(valid_d[-1]),
-            framer.sink.de.eq(conv.source.de), framer.sink.hsync.eq(conv.source.hsync), framer.sink.vsync.eq(conv.source.vsync),
-            framer.sink.r.eq(conv.source.r), framer.sink.g.eq(conv.source.g), framer.sink.b.eq(conv.source.b),
-            conv.fmt_in.eq(input_format),
-            conv.rgb_in_limited.eq(input_rgb_limited),
-        ]
+        if with_converter:
+            self.converter = conv = ClockDomainsRenamer("pix")(PixelFormatConverter())
+            valid_d = Signal(conv.latency)
+            self.sync.pix += valid_d.eq(Cat(self.sink.valid, valid_d))
+            self.comb += [
+                self.sink.ready.eq(1),
+                conv.sink.de.eq(self.sink.de), conv.sink.hsync.eq(self.sink.hsync), conv.sink.vsync.eq(self.sink.vsync),
+                conv.sink.r.eq(self.sink.r), conv.sink.g.eq(self.sink.g), conv.sink.b.eq(self.sink.b),
+                framer.sink.valid.eq(valid_d[-1]),
+                framer.sink.de.eq(conv.source.de), framer.sink.hsync.eq(conv.source.hsync), framer.sink.vsync.eq(conv.source.vsync),
+                framer.sink.r.eq(conv.source.r), framer.sink.g.eq(conv.source.g), framer.sink.b.eq(conv.source.b),
+                conv.fmt_in.eq(input_format),
+                conv.rgb_in_limited.eq(input_rgb_limited),
+            ]
+        else:
+            self.comb += self.sink.connect(framer.sink)
 
         n_audio = 3 if with_audio else 0
         n_sinks = n_audio + extra_packet_sinks + 2
@@ -141,16 +146,19 @@ class HDMITransmitter(LiteXModule):
         self.comb += [
             rules.y.eq(_field(avi, fa.y)), rules.c.eq(_field(avi, fa.c)), rules.q.eq(_field(avi, fa.q)),
             rules.vic.eq(_field(avi, fa.vic)), rules.yq.eq(_field(avi2, self.avi_config2.fields.yq)),
-            If(ctl[1],
-                conv.fmt_out.eq(PixelFormat.RGB),
-                conv.rgb_out_limited.eq(0),
-            ).Else(
-                conv.fmt_out.eq(rules.fmt),
-                conv.rgb_out_limited.eq(rules.rgb_limited),
-            ),
-            conv.colorimetry.eq(rules.colorimetry),
-            conv.ycc_limited.eq(rules.ycc_limited),
         ]
+        if with_converter:
+            self.comb += [
+                If(ctl[1],
+                    conv.fmt_out.eq(PixelFormat.RGB),
+                    conv.rgb_out_limited.eq(0),
+                ).Else(
+                    conv.fmt_out.eq(rules.fmt),
+                    conv.rgb_out_limited.eq(rules.rgb_limited),
+                ),
+                conv.colorimetry.eq(rules.colorimetry),
+                conv.ycc_limited.eq(rules.ycc_limited),
+            ]
 
         # Frame trigger: VSYNC leading edge at the framer input.
         vsync_r = Signal()

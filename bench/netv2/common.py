@@ -13,6 +13,8 @@ bridge on the board's ``serial`` pads, which are wired to the Raspberry Pi
 host's ``/dev/ttyAMA0`` (see doc/testing.md and bench/netv2/host/).
 """
 
+import os
+
 from migen import *
 
 from litex.gen import *
@@ -88,7 +90,7 @@ class BenchSoC(SoCMini):
                       ident=ident, ident_version=True)
         SoCMini.__init__(self, platform, sys_clk_freq, **kwargs)
         self.crg = CRG(platform, sys_clk_freq, with_pix=with_pix, with_idelay=with_idelay,
-                       fractional=(toolchain != "openxc7"))
+                       fractional=(toolchain != "openxc7" and os.environ.get("LITEVIDEO_INTEGER_MMCM") is None))
         self.add_uartbone(uart_name="serial", baudrate=115200)
         if toolchain == "openxc7":
             from bench.netv2.openxc7 import prepare_soc
