@@ -26,12 +26,24 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   (architecture, decisions D1 to D12, phases 0 to 7, hardware tiers T0 to T4,
   references). Sent for sub-agent review.
 
+- **Spec approved** after two sub-agent review rounds (v3). Phase 0+1 plan
+  written (`docs/superpowers/plans/2026-09-06-phase0-1-scaffolding-and-protocol-layer.md`).
+- **Hardware update (afternoon).** The user connected a Magewell
+  XI100DUSB-HDMI capture (video `/dev/video0`, ALSA card `XI100DUSBHDMI`) to
+  `rpi5-netv2` with the NeTV2 `hdmi_out` 0 cabled into it. Tier T4 (real
+  sink with audio capture) is therefore available on rpi5 from phase 2.
+- **Third finding.** HDMI §5.2.3.3: channel 0 carries TERC4(1,1,VSYNC,HSYNC)
+  during data island guard bands; the netv2-fpga encoder sends the channel
+  1/2 guard token on all channels. Also confirmed from the HDMI 1.4b CTS
+  wording: channel 0 bit 3 is 0 on the first island character and 1 on all
+  other packet characters.
+
 ### Needs the user
 
-1. Plug an HDMI cable from `hdmi_out` 0 to `hdmi_in` 0 on `rpi5-netv2`
-   (enables tier T2: real TMDS loopback).
+1. Plug an HDMI cable into `hdmi_in` 0 on `rpi5-netv2` from a source (or
+   from `hdmi_out` 1) to enable receiver tests there (tier T2/T3 style).
 2. Say when `rpi3-netv2` may be used again after the HDCP handshake work
-   (tier T3: real source), and reconnect the MS2109 capture card to its
-   `hdmi_out` 0 (tier T4: real sink with audio capture).
-3. Tell the netv2-fpga session about the ECC polynomial finding (or confirm I
-   should message it).
+   (tier T3: real source `rpiz-3` into the receiver).
+3. Decide whether I should tell the netv2-fpga session about the three
+   spec divergences (ECC polynomial, ASP subpacket layout, channel 0 guard
+   band) or whether you will.

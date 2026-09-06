@@ -110,7 +110,7 @@ with `test_*.py` runnable by `pytest`, `bench/` for board targets, `doc/`,
 
 | Host | Board | Access | State (2026-09-06) |
 |---|---|---|---|
-| `rpi5-netv2.welland.mithis.com` | XC7A100T dev unit | user `tim`; `sudo openFPGALoader -c rp1pio --pins=27:22:4:17 x.bit`; UART `/dev/ttyAMA0` | free for one-at-a-time volatile loads with an announcement to the peer session; **no HDMI cables**, all HPD lines unplugged |
+| `rpi5-netv2.welland.mithis.com` | XC7A100T dev unit | user `tim`; `sudo openFPGALoader -c rp1pio --pins=27:22:4:17 x.bit`; UART `/dev/ttyAMA0` | free for one-at-a-time volatile loads with an announcement to the peer session; since 2026-09-06 afternoon a **Magewell XI100DUSB-HDMI** (USB `2935:0001`, `/dev/video0`, ALSA card `XI100DUSBHDMI`) captures `hdmi_out` 0 with audio; HDMI inputs still uncabled |
 | `rpi3-netv2.welland.mithis.com` | XC7A35T golden unit | user `pi`; volatile loads only, never flash/reboot/SRST | **off limits** until the user says the HDCP handshake work is finished (an HDCP receiver bitstream is live); `rpiz-3` HDMI source on input 0; MS2109 capture card absent from `lsusb` |
 
 Consequences: real-TMDS validation needs the user to plug an HDMI cable from
@@ -412,10 +412,10 @@ ISERDESE2 from pad, BUFIO/BUFR). Fork fixes go to `mithro/yosys`,
 | T1 fabric loopback on rpi5 | nothing new | framer, islands, ECC, audio round trip, InfoFrames on silicon at the pixel rate |
 | T2 cabled loopback on rpi5 | **user plugs HDMI cable `hdmi_out` 0 → `hdmi_in` 0** | OSERDES/ISERDES, clock recovery, real TMDS with islands, both directions of the ECC against each other |
 | T3 real source on rpi3 | **user releases rpi3 after HDCP work**; `rpiz-3` HDMI audio enabled | ECC polynomial and byte order against a real source (the decisive check for D6), AVI/Audio InfoFrame decode, audio extraction of a real tone |
-| T4 real sink | **user reconnects the MS2109 (UVC+UAC) to rpi3's `hdmi_out` 0** or provides another audio-capable sink | transmitter accepted by a commercial sink: video lock, audio InfoFrame honoured, tone recovered from the capture card's ALSA device |
+| T4 real sink | the Magewell capture on `rpi5-netv2` (available since 2026-09-06) | transmitter accepted by a commercial sink: video lock, audio InfoFrame honoured, tone recovered from the capture card's ALSA device; a commercial sink accepting the islands is the decisive check for the ECC and layout choices (D6) |
 
-Without T3 or T4 the ECC choice rests on the specification text and
-hdl-util; the report will say so.
+T4 runs on `rpi5-netv2` from phase 2 onwards. T2 still needs a cable into
+`hdmi_in` 0 and T3 the golden rig.
 
 ## 10. Phases
 

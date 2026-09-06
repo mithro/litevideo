@@ -6,7 +6,8 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] Fast-forward fork to upstream and push
 - [x] Worktrees and branches
 - [x] Design spec written
-- [~] Spec review by sub-agent
+- [x] Spec review by sub-agent (2 rounds, approved)
+- [~] Phase 0+1 plan under review
 - [ ] `pyproject.toml` + uv environment pinned to LiteX 2026.04
 - [ ] `test/` with the existing csc benches ported to pytest
 - [ ] `.github/workflows/ci.yml`
