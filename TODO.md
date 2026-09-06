@@ -47,8 +47,9 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 
 ## Phase 6: open-source flows
 - [x] Yosys → Vivado for tx: timing clean, T4 pass on hardware (2026-09-07)
-- [~] openXC7 for tx: snap nextpnr 0.8.2 rejects the OSERDES cascade -> built nextpnr-xilinx master locally (~/github/openXC7); snap prjxray-db lacks OSERDES DDR.W10 -> openXC7/prjxray-db master sparse clone; chipdb regenerated; bitstream build in progress; nextpnr timing says pix domain 68 MHz vs 74.25 needed (its model), to verify on hardware
-- [ ] rx attempt on openXC7 (ISERDES from IDELAY, MMCM); fork fixes if needed; doc/toolchains.md
+- [x] openXC7 for tx: full bench (converter, audio) pixel-exact on the Magewell, audio identical to the Vivado control (2026-09-07 05:40). Needed: nextpnr-xilinx master + 2 local fixes (MMCM PHASE default, TMDS slew) on branch litevideo-fixes in ~/github/openXC7/nextpnr-xilinx; openXC7/prjxray-db master (OSERDES W10); integer MMCM; -nodsp (DSP48E1 cascade broken, reproduced by bench/netv2/csc_test)
+- [ ] push the nextpnr fixes to a mithro fork (no upstream PR without the user's say-so); fix the DSP cascade in nextpnr; seed sweep of the tx build
+- [~] rx attempt on openXC7 (build running)
 
 ## Phase 7: optimisation and review
 - [x] `scripts/resources.py` + `doc/resources.md` (per-core Yosys estimates, bench P&R numbers)

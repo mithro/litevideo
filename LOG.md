@@ -207,3 +207,25 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   one-hot rewrite measured the same, reverted); serialising the packet
   interface is the real saving.
 - Sub-agents still unavailable (rate limit); reviews deferred.
+
+## 2026-09-07 (05:45 ACST)
+
+- **Fully open-source transmitter bitstream works** (Yosys 0.52 -nodsp +
+  nextpnr-xilinx master + openXC7/prjxray-db master + fasm2frames/xc7frames2bit):
+  bars pixel-exact in HDMI and DVI modes, AVMUTE, audio tone identical to a
+  Vivado build with the same integer MMCM clock. Getting there:
+  1. snap nextpnr 0.8.2 rejects OSERDESE2 master/slave -> built master locally.
+  2. snap prjxray-db lacks OSERDES DDR.W10 -> openXC7/prjxray-db master; chipdb
+     regenerated from it (5 min).
+  3. MMCM never locked: nextpnr defaulted CLKFBOUT_PHASE to 1 degree when the
+     parameter is absent (PHASE_MUX=1); found by diffing bit2fasm of Vivado's
+     bitstream against nextpnr's FASM, confirmed by patching the FASM. Fixed in
+     the local clone (branch litevideo-fixes, ef7c4f2) with TMDS_33 SLEW.FAST.
+  4. Fractional MMCM does not lock either -> bench uses S7MMCM(fractional=False)
+     for the open flow (73.75 MHz).
+  5. DSP48E1 PCIN/PCOUT cascades lose a product: `bench/netv2/csc_test.py` +
+     `run_csc_test.py` reproduce it (identity: (255,255,255)->(0,255,255));
+     -nodsp is exact. Open flow uses -nodsp.
+- Tools built: ~/github/openXC7/{nextpnr-xilinx,prjxray-db,chipdb}; `uartbone.py
+  batch` runs register scripts on the Pi in one ssh.
+- Receiver bench on openXC7 building.
