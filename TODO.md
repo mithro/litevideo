@@ -30,15 +30,19 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 ## Phase 3: audio
 - [x] plan written (review sub-agent hit a rate limit; self-reviewed)
 - [x] extract, packetizer (embed), ACR, tone source, IEC 60958 status, docs (CSR/DMA sources deferred)
-- [~] T1 tone round trip and T4 Magewell audio capture on rpi5 (build pending Vivado slot)
+- [x] T1 tone round trip (lossless at 47964 frames/s) and T4 Magewell audio capture (999.3 Hz, 44 dB) on rpi5, 2026-09-07
+- [ ] phase-3 code review by sub-agent (rate limit)
 
 ## Phase 4: pixel formats
-- [ ] colorimetry/range parameterisation, converter, AVI-driven rx path, docs
+- [x] colorimetry model (BT.601/709, full/limited), CSCMatrix, 4:2:2 wire cores, PixelFormatConverter, AVIFormatControl
+- [x] transmitter (avi_config-driven) and receiver (AVI-latch-driven) integration, doc/pixel-formats.md
+- [x] T1 wire-side frame CRC for 7 format settings matches the model (2026-09-07)
+- [ ] sub-agent review; 4:2:2 chroma interpolation and XAPP930-style multiplier sharing as phase-7 candidates
 
 ## Phase 5: receiver integration
 - [x] `HDMIReceiver` (period + island decoders, AVI capture, timing measure, audio extract FIFO), `doc/receiver.md`
 - [x] `S7MMCMClocking`, `bench/netv2/hdmi_rx.py` (hdmi_in 1, 720p-preferring EDID), `run_rx.py` + on-Pi `align`
-- [ ] T3 on rpi5 against the Pi 5 HDMI-A-2 source at 65 MHz (build pending Vivado slot); then 74.25 MHz after EDID re-probe
+- [~] T3 on rpi5 against the Pi 5 HDMI-A-2 source at 65 MHz (build 2 running: build 1 failed timing on LiteX's MMCM reset CDC); then 74.25 MHz after EDID re-probe
 - [ ] `HDMIIn`-style wrapper (frame buffer / DMA sink) and stream audio sink; receiver code review by sub-agent
 
 ## Phase 6: open-source flows

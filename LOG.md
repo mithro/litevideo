@@ -154,3 +154,33 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   OOM-killed); two builds queued: audio loopback (phase 3 hardware) and rx 65 MHz.
 - Peer `crazy-fpga-usb2-40` loaded a volatile USB link-test bitstream on
   rpi5-netv2 (HDMI pins untouched, ~1 minute); no conflict with our idle state.
+
+## 2026-09-07 (02:45 ACST)
+
+- Vivado released by the HDCP session (their 100T route OOM-killed 5 times at
+  the box's swap ceiling; they have handed the swap question to Tim).
+- **Phase 3 on hardware.** Audio loopback bench (bitstream fb6384d9, then
+  d9c7c3cd): ACR N=6144/CTS=74250 at 1000/s, Audio InfoFrame, 47964 audio
+  frames/s in and 2x subframes out with zero overruns/drops over 8-11 s, tone
+  recovered from the fabric receiver, and the Magewell captures the 1 kHz tone
+  on both channels 44 dB above the next line (+-33 Hz resampling sidebands from
+  the 74.219 MHz MMCM clock). Two script fixes on the way: the overrun counter
+  accumulates while DVI mode stops islands (measure over a window), and a
+  free-running overflowing FIFO is not a contiguous stream after the first drain
+  -> `AudioSampleCapture` one-shot armed capture (also in `HDMIReceiver`).
+- **Phase 4 done in simulation and on T1.** `csc/colorimetry.py` derives
+  matrices from Kr/Kb and the ranges (BT.601-7 §2.5.x and BT.709-6 Table 3
+  verified from the ITU PDFs with pdftotext), `CSCMatrix`, `wire422.py`
+  (Figure 6-2), `PixelFormatConverter` (latency 8, 64-entry table),
+  `AVIFormatControl` (CEA-861-D defaults incl. VIC 1 full range and the SD/HD
+  colorimetry split). Transmitter converts per `avi_config` (q now resets to
+  full range so the default output is unchanged), receiver converts back per
+  the latched AVI (`raw_source` keeps wire values). On hardware all seven
+  format settings give the model's wire-side frame CRC. 12 DSP48 for the
+  run-time matrix in the tx bench (rx converter trimmed in the rx bench until
+  its source was used).
+- Receiver bench build 1: WNS -5.54 ns on LiteX's MMCM reset synchroniser
+  (sys CSR -> BUFR input clock domain): false path added, build 2 running.
+- 110 tests pass; `hdmi-support` pushed.
+- Peer `crazy-fpga-usb2-40` briefly rewrote my mailbox rows by mistake and
+  restored them; verified.
