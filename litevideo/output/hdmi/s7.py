@@ -26,8 +26,13 @@ class S7HDMIOutEncoderSerializer(Module):
         else:
             self.comb += data.eq(self.data)
 
-        ce = Signal()
-        self.sync.pix += ce.eq(~ResetSignal("pix"))
+        # OSERDESE2 OCE is sampled by CLK (pix5x). A register in the pix domain
+        # feeding it (as upstream did) is a pix -> pix5x crossing with a 2.7 ns
+        # budget to eight IO tiles and fails timing at 720p (WNS -1.3 ns).
+        # LiteX's VideoS7HDMI10to1Serializer ties OCE high and relies on RST
+        # (synchronous to CLKDIV = pix); do the same.
+        ce = Signal(reset=1)
+        self.comb += ce.eq(1)
 
         shift = Signal(2)
         pad_se = Signal()
