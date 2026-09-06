@@ -64,6 +64,9 @@ class BenchSoC(SoCMini):
     def __init__(self, variant="a7-100", toolchain="vivado", sys_clk_freq=50e6, ident="LiteVideo NeTV2 bench",
                  with_pix=True, with_idelay=False, **kwargs):
         platform = kosagi_netv2.Platform(variant=variant, toolchain=toolchain)
+        if toolchain == "openxc7":
+            from bench.netv2.openxc7 import prepare_platform
+            prepare_platform(platform)
         # The LiteX argument parser injects cpu_type="vexriscv", with_uart=True,
         # with_timer=True, an SRAM size and ident_version into soc_argdict;
         # this bench has no CPU (CSRs come over uartbone on the same "serial"
@@ -73,6 +76,9 @@ class BenchSoC(SoCMini):
         SoCMini.__init__(self, platform, sys_clk_freq, **kwargs)
         self.crg = CRG(platform, sys_clk_freq, with_pix=with_pix, with_idelay=with_idelay)
         self.add_uartbone(uart_name="serial", baudrate=115200)
+        if toolchain == "openxc7":
+            from bench.netv2.openxc7 import prepare_soc
+            prepare_soc(self)
 
 
 def bench_main(soc_cls, description, default_build_name):
