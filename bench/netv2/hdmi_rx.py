@@ -20,10 +20,12 @@ LPCM audio; then ``HDMIReceiver``.
 """
 
 from migen import *
+from migen.genlib.cdc import MultiReg
 
 from litex.gen import *
 from litex.build.parser import LiteXArgumentParser
 from litex.soc.integration.builder import Builder
+from litex.soc.interconnect.csr import *
 from litex_boards.platforms import kosagi_netv2
 
 from litevideo.input.clocking import S7MMCMClocking
@@ -35,6 +37,7 @@ from litevideo.input.edid import EDID, _default_edid
 from litevideo.hdmi.receiver import HDMIReceiver
 
 from bench.netv2.common import BenchSoC
+from bench.netv2.frame_crc import FrameCRC
 
 
 def edid_prefer_720p(edid=_default_edid):
@@ -96,10 +99,20 @@ class HDMIRxSoC(BenchSoC):
             self.hdmi_rx.sink.c2.eq(self.chansync.data_out2.raw),
         ]
 
-        # The recovered clock family is asynchronous to sys.
+        # Frame CRCs of the wire pixels and of the converted (full-range RGB) pixels.
+        for name, src in (("raw", self.hdmi_rx.raw_source), ("rgb", self.hdmi_rx.source)):
+            crc = ClockDomainsRenamer("pix")(FrameCRC())
+            setattr(self, f"{name}_frame_crc", crc)
+            self.comb += [crc.de.eq(src.de), crc.vsync.eq(src.vsync), crc.r.eq(src.r), crc.g.eq(src.g), crc.b.eq(src.b)]
+            csr = CSRStatus(32, name=f"{name}_frame_crc", description=f"CRC-32 of the last {name} frame.")
+            setattr(self, f"{name}_frame_crc_csr", csr)
+            self.specials += MultiReg(crc.crc, csr.status)
+
+        # The recovered clock family (input clock and BUFR copy, which clock
+        # LiteX's MMCM reset synchroniser, and the MMCM outputs) is asynchronous to sys.
         platform.add_period_constraint(pads.clk_p, 1e9 / clkin_freq)
-        platform.add_false_path_constraints(self.crg.cd_sys.clk, self.clocking.cd_pix.clk)
-        platform.add_false_path_constraints(self.crg.cd_sys.clk, self.clocking.cd_pix1p25x.clk)
+        for clk in (self.clocking.clk_input, self.clocking.cd_pix.clk, self.clocking.cd_pix1p25x.clk, self.clocking.cd_pix5x.clk):
+            platform.add_false_path_constraints(self.crg.cd_sys.clk, clk)
 
 
 def main():
