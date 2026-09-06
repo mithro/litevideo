@@ -26,7 +26,7 @@ Convention on the shared machine: one Vivado run at a time.
 | Vivado 2025.2 synth + P&R | 1795 | 2965 | 0.5 | 12 | 1.206 | (same design as the loopback runs) |
 | Yosys 0.52 synth (`--synth-mode yosys`) + Vivado P&R | 2123 | 3390 | 0 | 9 | 1.206 | tier T4 pass: Magewell bars in HDMI/DVI, AVMUTE blanks, 1 kHz tone 43 dB (`doc/reports/2026-09-07-netv2-tx-yosys.md`) |
 | openXC7 0.8.2 snap (Yosys + nextpnr-xilinx 0.8.2) | — | — | — | — | — | nextpnr rejects the cascaded 10:1 OSERDESE2 ("has disconnected OQ/OFB output ports" on the SLAVE half); master/slave support exists in openXC7/nextpnr-xilinx master (`xilinx/pack_io_xc7.cc`), so a newer nextpnr is built locally (see below) |
-| openXC7: Yosys 0.52 + nextpnr-xilinx master (bd9c74c + 2 local fixes) + openXC7/prjxray-db master, `LITEVIDEO_NO_CONVERTER=1` | — | — | — | 0 | nextpnr: pix 85 MHz vs 73.75 needed | **tier T4 pass for video**: bars pixel-exact in HDMI and DVI mode, AVMUTE blanks; tone captured at 993.3 Hz with 24 dB, identical to the Vivado control build with the same integer MMCM clock (`doc/reports/2026-09-07-netv2-tx-openxc7.md`, `-tx-vivado-int.md`) |
+| openXC7: Yosys 0.52 (`-nodsp`) + nextpnr-xilinx master (bd9c74c + 2 local fixes) + openXC7/prjxray-db master, full bench incl. converter | — | — | — | 0 | nextpnr: pix 86.8 MHz vs 73.75 needed | **tier T4 pass for video**: bars pixel-exact in HDMI and DVI mode, AVMUTE blanks; tone captured at 993.3 Hz with 24 dB, identical to the Vivado control build with the same integer MMCM clock (`doc/reports/2026-09-07-netv2-tx-openxc7-converter.md`, `-tx-vivado-int.md`) |
 
 ### openXC7 findings (2026-09-07)
 
@@ -35,7 +35,8 @@ Fixed in the local nextpnr-xilinx clone (`~/github/openXC7/nextpnr-xilinx`, bran
 1. **MMCM never locked**: `xilinx/fasm.cc` defaulted `CLKFBOUT_PHASE`/`CLKOUTn_PHASE` to 1 degree when the instance omits the parameter (LiteX's `S7MMCM` does), giving `CLKFBOUT_CLKOUT1_PHASE_MUX = 1`; every other MMCM bit matched Vivado's bitstream (`bit2fasm` diff). Default is now 0.
 2. **TMDS_33 outputs were slow slew**: Vivado sets `SLEW.FAST` on both sites of a TMDS_33/LVDS_25 pair regardless of the attribute; nextpnr emitted nothing. (Did not change the observed errors, but matches Vivado.)
 3. The packaged prjxray-db lacks `OSERDES.DATA_WIDTH.DDR.W10`; openXC7/prjxray-db master has it (sparse clone of `artix7`, 190 MB). The chip database must be regenerated from the same database (`bbaexport.py` + `bbasm`, about 5 minutes for XC7A100T).
-4. Fractional MMCM settings (LiteX's default 74.219 MHz) did not lock even with fix 1; the bench uses `S7MMCM(fractional=False)` for the open flow (73.75 MHz).
+4. Fractional MMCM settings (LiteX's default 74.219 MHz) did not lock even with fix 1; the bench uses `S7MMCM(fractional=False)` for the open flow (73.75 MHz). The 24 dB tone figure (44 dB with the 74.219 MHz clock) is the capture card resampling 47.68 kHz audio to 48 kHz and appears identically with Vivado's bitstream.
+5. An earlier `-nodsp` build with the *unfixed* nextpnr (FASM patched by hand) showed the green channel stuck at 255 and no data islands; the same design through the fixed nextpnr is exact, so that was most likely a placement/routing difference between runs rather than a property of the design. Worth re-checking across seeds.
 
 **DSP48E1 cascades are broken in nextpnr-xilinx.** `bench/netv2/csc_test.py`
 (one `CSCMatrix` with CSR-loaded coefficients and pixels, sys domain only)
