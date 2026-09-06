@@ -45,17 +45,17 @@ class DMAReader(Module, AutoCSR):
     """
     def __init__(self, dram_port, fifo_depth=512, genlock_stream=None):
         self.sink = sink = stream.Endpoint(frame_dma_layout)  # "inputs" are the DMA frame parameters
-        self.source = source = stream.Endpoint([("data", dram_port.dw)])  # "output" is the data stream
+        self.source = source = stream.Endpoint([("data", dram_port.data_width)])  # "output" is the data stream
 
         # # #
 
         self.submodules.dma = LiteDRAMDMAReader(dram_port, fifo_depth, True)
         self.submodules.fsm = fsm = FSM(reset_state="IDLE")
 
-        shift = log2_int(dram_port.dw//8)
-        base = Signal(dram_port.aw)
-        length = Signal(dram_port.aw)
-        offset = Signal(dram_port.aw)
+        shift = log2_int(dram_port.data_width//8)
+        base = Signal(dram_port.address_width)
+        length = Signal(dram_port.address_width)
+        offset = Signal(dram_port.address_width)
         self.delay_base = CSRStorage(32)
         self.comb += [
             base.eq(sink.base[shift:]),   # ignore the lower bits of the base + length to match the DMA's expectations
@@ -202,8 +202,8 @@ class VideoOutCore(Module, AutoCSR):
             dw = modes_dw[mode]
         except:
             raise ValueError("Unsupported {} video mode".format(mode))
-        assert dram_port.dw >= dw
-        assert dram_port.dw == 2**log2_int(dw, need_pow2=False)
+        assert dram_port.data_width >= dw
+        assert dram_port.data_width == 2**log2_int(dw, need_pow2=False)
         self.source = source = stream.Endpoint(video_out_layout(dw))  # "output" is a video layout that's dw wide
 
         self.underflow_enable = CSRStorage()

@@ -138,7 +138,7 @@ class HDMIIn(Module, AutoCSR):
         ]
 
         if dram_port is not None:
-            self.submodules.frame = FrameExtraction(dram_port.dw, fifo_depth, mode)
+            self.submodules.frame = FrameExtraction(dram_port.data_width, fifo_depth, mode)
             self.comb += [
                 self.frame.valid_i.eq(self.syncpol.valid_o),
                 self.frame.de.eq(self.syncpol.de),
