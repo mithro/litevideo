@@ -88,6 +88,18 @@ def csr_capture(prefix, count=512, settle=0.05):
     return csr_drain(f"{prefix}_sample_data", f"{prefix}_sample_valid", f"{prefix}_sample_pop", count)
 
 
+def csr_batch(ops):
+    """Run a list of ("w", name, value) / ("r", name) / ("sleep", s) ops on the Pi in one go; returns the reads."""
+    local = os.path.join("tmp", "batch.json")
+    os.makedirs("tmp", exist_ok=True)
+    with open(local, "w") as f:
+        json.dump(ops, f)
+    copy_to(local, "batch.json")
+    os.remove(local)
+    r = ssh(["python3", f"{REMOTE_DIR}/uartbone.py", "--port", UART, "--csr", f"{REMOTE_DIR}/csr.csv", "batch", f"{REMOTE_DIR}/batch.json"], timeout=600)
+    return json.loads(r.stdout)
+
+
 def csr_drain(data, valid, pop, count):
     """Pop up to ``count`` words from a FIFO exposed as data/valid/pop CSRs (one ssh session)."""
     r = ssh(["python3", f"{REMOTE_DIR}/uartbone.py", "--port", UART, "--csr", f"{REMOTE_DIR}/csr.csv",

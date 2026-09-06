@@ -31,7 +31,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--build", required=True)
     p.add_argument("--no-load", action="store_true")
-    p.add_argument("--pixels", type=int, default=12)
+    p.add_argument("--pixels", type=int, default=64)
     p.add_argument("--report", default=None)
     args = p.parse_args()
     bitstream = os.path.join(args.build, "gateware", "kosagi_netv2.bit")
@@ -50,17 +50,24 @@ def main():
     random.seed(7)
     pixels = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
     pixels += [tuple(random.randint(0, 255) for _ in range(3)) for _ in range(max(0, args.pixels - len(pixels)))]
+    ops = []
     for name, mat in matrices.items():
         q = cm.quantize(mat, CW)
         for i in range(3):
-            rig.csr_write(f"main_offset{i}", signed(q.offsets[i], 23))
+            ops.append(("w", f"main_offset{i}", signed(q.offsets[i], 23)))
             for j in range(3):
-                rig.csr_write(f"main_coef{i}{j}", signed(q.m[i][j], 15))
-        rig.csr_write("main_limits", q.mins[0] | (q.maxs[0] << 8))
+                ops.append(("w", f"main_coef{i}{j}", signed(q.m[i][j], 15)))
+        ops.append(("w", "main_limits", q.mins[0] | (q.maxs[0] << 8)))
+        for px in pixels:
+            ops.append(("w", "main_pixel", px[0] | (px[1] << 8) | (px[2] << 16)))
+            ops.append(("r", "main_result"))
+    results = iter(rig.csr_batch(ops))
+    for name, mat in matrices.items():
+        q = cm.quantize(mat, CW)
+        q = cm.Matrix(q.m, q.offsets, [q.mins[0]] * 3, [q.maxs[0]] * 3)   # the test SoC has one min/max pair
         bad = []
         for px in pixels:
-            rig.csr_write("main_pixel", px[0] | (px[1] << 8) | (px[2] << 16))
-            r = rig.csr_read(["main_result"])["main_result"]
+            r = next(results)
             got = (r & 0xFF, (r >> 8) & 0xFF, (r >> 16) & 0xFF)
             exp = cm.apply_quantized(q, CW, px)
             if got != exp:

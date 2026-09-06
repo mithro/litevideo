@@ -37,14 +37,18 @@ Fixed in the local nextpnr-xilinx clone (`~/github/openXC7/nextpnr-xilinx`, bran
 3. The packaged prjxray-db lacks `OSERDES.DATA_WIDTH.DDR.W10`; openXC7/prjxray-db master has it (sparse clone of `artix7`, 190 MB). The chip database must be regenerated from the same database (`bbaexport.py` + `bbasm`, about 5 minutes for XC7A100T).
 4. Fractional MMCM settings (LiteX's default 74.219 MHz) did not lock even with fix 1; the bench uses `S7MMCM(fractional=False)` for the open flow (73.75 MHz).
 
-Open: with the `PixelFormatConverter` present the open-flow bitstream produces
-wrong pixel arithmetic while Yosys+Vivado from the same Yosys front end is
-correct: with DSP48E1 inference the blue output became (blue AND red); with
-`-nodsp` the green output stuck at 255 and the data islands disappeared. The
-same design without the converter is pixel-exact, so this is a
-nextpnr-xilinx issue around the matrix's multiply/accumulate logic (DSP48E1
-cell support and/or CARRY4 chains) that needs a small reproduction design
-with a CRC readable over uartbone; not yet characterised.
+**DSP48E1 cascades are broken in nextpnr-xilinx.** `bench/netv2/csc_test.py`
+(one `CSCMatrix` with CSR-loaded coefficients and pixels, sys domain only)
+reproduces it: Yosys chains the three products of each matrix row through
+the DSP48E1 PCIN/PCOUT cascade (MREG absorbed, `keep` on the product
+registers does not prevent it), and on hardware two of the three chains
+lose one product (rows 0 and 1 of column 0 read as zero: identity gives
+(255,255,255) -> (0,255,255)); the same design synthesised with `-nodsp` is
+exact for 64 pixels x 4 matrices (`doc/reports/2026-09-07-netv2-csc-test-openxc7-{dsp,lut}.md`).
+This explains the tx bench's blue = blue AND red. `bench/netv2/openxc7.py`
+therefore adds `-nodsp` for the open flow unless `LITEVIDEO_OPENXC7_DSP` is
+set. Not yet fixed in nextpnr (the cascade routing/placement in
+`xilinx/pack_dsp*.cc` is the place to look).
 
 Practicalities: `fasm2frames` from the snap falls back to the pure-Python
 `fasm` parser (about 4 minutes for this design); the PyPI `fasm` wheel for

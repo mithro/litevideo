@@ -127,6 +127,8 @@ def main():
     w = sub.add_parser("write"); w.add_argument("name"); w.add_argument("value")
     d = sub.add_parser("drain", help="pop up to COUNT words from a FIFO exposed as data/valid/pop CSRs")
     d.add_argument("data"); d.add_argument("valid"); d.add_argument("pop"); d.add_argument("count", type=int)
+    b = sub.add_parser("batch", help='run a JSON list of ops [["w", name, value], ["r", name], ["sleep", seconds]] and print the read results')
+    b.add_argument("job")
     a = sub.add_parser("align", help="phase-align HDMI input channels data0..data2 (litevideo S7DataCapture)")
     a.add_argument("--slave-taps", type=int, default=5, help="initial slave IDELAY offset (about a quarter bit)")
     args = p.parse_args()
@@ -144,6 +146,17 @@ def main():
             words.append(csr.read(args.data))
             csr.write(args.pop, 1)
         print(json.dumps(words))
+    elif args.cmd == "batch":
+        import time
+        out = []
+        for op in json.load(open(args.job)):
+            if op[0] == "w":
+                csr.write(op[1], int(op[2]))
+            elif op[0] == "r":
+                out.append(csr.read(op[1]))
+            elif op[0] == "sleep":
+                time.sleep(float(op[1]))
+        print(json.dumps(out))
     elif args.cmd == "align":
         print(json.dumps({f"data{n}": align_channel(csr, f"data{n}", args.slave_taps) for n in range(3)}))
     else:
