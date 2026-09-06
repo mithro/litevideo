@@ -30,7 +30,7 @@ Convention on the shared machine: one Vivado run at a time.
 
 ### openXC7 findings (2026-09-07)
 
-Fixed in the local nextpnr-xilinx clone (`~/github/openXC7/nextpnr-xilinx`, branch `litevideo-fixes`, commit ef7c4f2), each confirmed on hardware by patching the FASM first:
+Fixed in the local nextpnr-xilinx clone (`~/github/openXC7/nextpnr-xilinx`, branch `litevideo-fixes`, commit ef7c4f2, pushed to the fork https://github.com/mithro/nextpnr-xilinx/tree/litevideo-fixes; no upstream pull request has been opened), each confirmed on hardware by patching the FASM first:
 
 1. **MMCM never locked**: `xilinx/fasm.cc` defaulted `CLKFBOUT_PHASE`/`CLKOUTn_PHASE` to 1 degree when the instance omits the parameter (LiteX's `S7MMCM` does), giving `CLKFBOUT_CLKOUT1_PHASE_MUX = 1`; every other MMCM bit matched Vivado's bitstream (`bit2fasm` diff). Default is now 0.
 2. **TMDS_33 outputs were slow slew**: Vivado sets `SLEW.FAST` on both sites of a TMDS_33/LVDS_25 pair regardless of the attribute; nextpnr emitted nothing. (Did not change the observed errors, but matches Vivado.)
