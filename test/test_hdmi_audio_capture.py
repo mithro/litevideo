@@ -77,5 +77,48 @@ class TestAudioSampleCapture(unittest.TestCase):
         run_simulation(dut, [source(), control()])
 
 
+
+class TestAudioSampleCaptureTwoClocks(unittest.TestCase):
+    def test_pix_faster_than_sys(self):
+        """The arm/reset handshake and the AsyncFIFO with genuinely different
+        clocks: pix at 74.25 MHz (13.47 ns), sys at 50 MHz (20 ns)."""
+        dut = AudioSampleCapture(depth=16)
+        words = []
+
+        @passive
+        def source():
+            n = 0
+            while True:
+                yield dut.sink.valid.eq(1)
+                yield dut.sink.sample.eq(n)
+                yield dut.sink.channel.eq(n & 1)
+                yield
+                yield dut.sink.valid.eq(0)
+                for _ in range(4):
+                    yield
+                n += 1
+
+        def control():
+            for _ in range(40):
+                yield
+            yield dut.arm.re.eq(1)
+            yield
+            yield dut.arm.re.eq(0)
+            for _ in range(400):
+                yield
+            self.assertEqual((yield dut.status.fields.armed), 0)
+            self.assertEqual((yield dut.status.fields.count), 16)
+            while (yield dut.sample_valid.status):
+                words.append((yield dut.sample_data.status))
+                yield dut.sample_pop.re.eq(1)
+                yield
+                yield dut.sample_pop.re.eq(0)
+                yield
+            samples = [w & 0xFFFFFF for w in words]
+            self.assertEqual(len(samples), 16)
+            self.assertEqual(samples, list(range(samples[0], samples[0] + 16)))
+
+        run_simulation(dut, {"sys": control(), "pix": source()}, clocks={"sys": 20, "pix": 13.47})
+
 if __name__ == "__main__":
     unittest.main()

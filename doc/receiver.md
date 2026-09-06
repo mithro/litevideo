@@ -77,12 +77,16 @@ reports 1024/768 active and 1344/806 total (VESA DMT 1024x768 60 Hz).
 With `with_audio=True`, `AudioExtract` (`litevideo/hdmi/audio/extract.py`,
 see `doc/audio.md`) unpacks Audio Sample Packets into IEC 60958 subframes
 and latches N/CTS from Audio Clock Regeneration packets and the Audio
-InfoFrame fields. The receiver moves the subframes through a 512-entry
-`AsyncFIFO` into the `sys` domain, where software drains them via
-`audio_sample_data` / `audio_sample_valid` / `audio_sample_pop`
-(`sample[23:0]`, `channel[26:24]`, `B/C/P/V` flags); `audio_dropped`
-counts subframes lost to a full FIFO. That is enough for the bench to prove
-extraction; a DMA/stream sink is the intended production path (see
+InfoFrame fields. The subframes go to an `AudioSampleCapture`
+(`litevideo/hdmi/audio/capture.py`): software writes its `arm` CSR, the
+512-entry `AsyncFIFO` is cleared and fills once with the next contiguous
+subframes (`sample[23:0]`, `channel[26:24]`, `B/C/P/V` flags) and stops
+when full, and software drains it over `sample_data` / `sample_valid` /
+`sample_pop`; in a SoC these appear as `<receiver>_audio_capture_*`. A
+free-running FIFO that overflows would admit one subframe per pop and its
+content would not be a contiguous stream. `audio_dropped` counts packets
+discarded because of a BCH ECC error before extraction. This is a bench
+interface; a DMA/stream sink is the intended production path (see
 `TODO.md` on the `claude-notes` branch).
 
 ## Front end and clocking (7-series)
@@ -94,11 +98,18 @@ MMCM can lock to is one parameter rather than a hand-computed table; the
 Pi 5's EDID-less 1024x768 mode (65 MHz) uses VCO 1300 MHz with dividers
 20/16/4. The `S7DataCapture` phase detector (master/slave ISERDES with
 IDELAYE2, the classic HDMI2USB scheme) still needs software to walk the
-delays: `bench/netv2/host/uartbone.py align` implements the
+delays: `bench/netv2/host/uartbone.py align` implements two methods: the
 `calibrate_delays` / `adjust_phase` loop of
 [HDMI2USB-litex-firmware `firmware/hdmi_in0.c`](https://github.com/timvideos/HDMI2USB-litex-firmware/blob/master/firmware/hdmi_in0.c)
 (reset both IDELAYs, preload the slave by a quarter bit at 78 ps per tap,
-then step master and slave together on `too_late` / `too_early`).
+then step master and slave together on `too_late` / `too_early`), and the
+default `--eye` scan, which sweeps the master tap and uses the channel
+synchroniser as the eye indicator (joint sweep, then per-channel
+refinement). On the Raspberry Pi 5 source the phase detector reported
+"too early" inside the good window and the loop walked out of it, while the
+eye scan shows 5-tap windows one bit period (18 taps at 74.25 MHz) apart;
+the input MMCM and IDELAYs are reset first, which is needed after the source
+clock restarts (`doc/reports/2026-09-07-netv2-rx-720p.md`).
 
 ## Testing
 
