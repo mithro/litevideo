@@ -283,3 +283,9 @@ def line_tokens(hactive, hblank, packets=(), hsync_start=None, hsync_len=None, v
     if return_syncs:
         return toks, periods, syncs
     return toks, periods
+
+
+# Transmitter-side model additions (InfoFrames, GCP, whole frames); imported last
+# because model_frames builds on the definitions above.
+from litevideo.hdmi.model_frames import (   # noqa: E402
+    infoframe_packet, avi_infoframe, gcp_packet, frame_tokens)
