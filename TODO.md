@@ -22,8 +22,9 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] island decoder, island encoder, tests, `doc/hdmi-protocol.md` (reviewed, fixes landed)
 
 ## Phase 2: transmitter
-- [ ] framer, scheduler, InfoFrame generators, `HDMIOut`, S7 PHY hdmi mode
-- [ ] `bench/netv2/hdmi_tx`, fabric loopback target, T1 run on rpi5
+- [x] plan (2 review rounds, approved)
+- [x] framer, scheduler, InfoFrame generators, `HDMITransmitter` (HDMIOut wrapper deferred to phase 5; raw S7 PHY reused)
+- [~] `bench/netv2/hdmi_tx`, fabric loopback target (written, Vivado build running); T1/T4 runs on rpi5 pending
 
 ## Phase 3: audio
 - [ ] extract, embed, ACR, sources (tone/CSR/DMA), IEC 60958 status, docs

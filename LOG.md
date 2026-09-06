@@ -80,3 +80,19 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   `max_packets`, missing island counter. Ten edge-case tests added; the TMDS
   model is now cross-checked against LiteX TMDSEncoder gateware. 46 tests pass.
 - Phase 2 (transmitter) plan written and sent for review.
+
+## 2026-09-06 (evening, phase 2)
+
+- Phase 2 plan approved after two review rounds (the reviewer executed the
+  plan code; its fixes: 11-stage delay line, ECP flag handoff, passive packet
+  inserter, SoC argument overrides, build paths, FrameCRC interface).
+- Landed on `hdmi-support`: model InfoFrame/GCP/frame generators, packet
+  scheduler, AVI InfoFrame and GCP generators, `HDMIFramer` (HSYNC-anchored
+  island placement, measured `hs2de`, Extended Control Period line),
+  `HDMITransmitter` with CSRs, `bench/netv2/` (CPU-less uartbone SoC,
+  CEA 720p colour-bar transmitter, fabric loopback with period histogram and
+  frame CRC, host CSR client, rig helpers, tier T1/T4 scripts),
+  `doc/transmitter.md`. 63 tests pass; both bench targets elaborate
+  (S7MMCM: VCO 742.19 MHz, pix 74.22 MHz, pix5x 371.09 MHz).
+- First Vivado build (loopback bench) started under `scripts/limited.py`,
+  announced to the peer sessions.
