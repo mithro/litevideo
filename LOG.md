@@ -96,3 +96,28 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   (S7MMCM: VCO 742.19 MHz, pix 74.22 MHz, pix5x 371.09 MHz).
 - First Vivado build (loopback bench) started under `scripts/limited.py`,
   announced to the peer sessions.
+
+## 2026-09-07 (early morning)
+
+- **First hardware results.** Loopback bench built with Vivado (LUT 1433,
+  FF 2940, 8 OSERDESE2, 1 MMCM + 1 PLL). First build had a duplicated clock
+  constraint (WNS -1.9 ns artefact); second build showed the real issue:
+  upstream litevideo registers the OSERDES OCE in the pix domain, a 2.7 ns
+  crossing to eight IO tiles (WNS -1.26 ns). Fixed by tying OCE high (LiteX
+  pattern); rebuild pending the peer session's Vivado hold. Since OCE is static
+  after reset, the second bitstream (SHA a06b96b4) was used for preliminary runs.
+- **Tier T1 on rpi5-netv2: all 13 checks pass** (60.1 fps, hs2de 260 with
+  6 packets per island, AVI InfoFrame every frame with good ECC, GCP added
+  under AVMUTE, DVI mode stops islands, frame CRC 0x5757aec7 identical at
+  the transmitter, the fabric receiver and the Python reference).
+- **Tier T4 on rpi5-netv2: the Magewell locks** to hdmi_out 0, captures the
+  colour bars pixel-accurately in HDMI and DVI mode, and blanks on GCP
+  Set_AVMUTE: a commercial sink parses LiteVideo's data islands (ECC
+  polynomial 0x83, channel-0 guard band TERC4(1,1,V,H)). Reports:
+  `doc/reports/2026-09-07-netv2-{loopback,tx}-prelim.md` + captures.
+- Coordination: loads announced in `/home/tim/netv2-rpi5-coord/LITEVIDEO-LOAD.md`
+  (the ten64 session `rpi-hdcp-output-c1` owns the rig for HDCP tests) and
+  to the two desktop sessions using the board. Rig cabling per its RIG.md:
+  hdmi_out 0 -> Magewell, Pi 5 HDMI-A-2 -> hdmi_in 1, dormant Pi Zero -> hdmi_in 0.
+- Phase 3 plan written; its review sub-agent hit an API rate limit, so the
+  implementation proceeds with self-review and a later review pass.

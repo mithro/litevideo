@@ -24,7 +24,8 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 ## Phase 2: transmitter
 - [x] plan (2 review rounds, approved)
 - [x] framer, scheduler, InfoFrame generators, `HDMITransmitter` (HDMIOut wrapper deferred to phase 5; raw S7 PHY reused)
-- [~] `bench/netv2/hdmi_tx`, fabric loopback target (written, Vivado build running); T1/T4 runs on rpi5 pending
+- [x] `bench/netv2/hdmi_tx`, fabric loopback target built; T1 (13/13) and T4 (Magewell locks, AVMUTE honoured) pass on rpi5 with the preliminary bitstream
+- [~] rebuild with the OCE fix and re-run T1/T4 for the final reports (Vivado hold by peer session)
 
 ## Phase 3: audio
 - [ ] extract, embed, ACR, sources (tone/CSR/DMA), IEC 60958 status, docs
