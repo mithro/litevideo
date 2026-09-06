@@ -39,6 +39,7 @@ Core:
   - Color space conversion (RGB <--> YCbCr)
   - Chroma resampling
   - Floating point arithmetic (WIP)
+  - HDMI data islands, audio and InfoFrames (in progress, see doc/)
 
 [> FPGA Proven
 --------------
@@ -75,16 +76,17 @@ $ ./litex_setup.py update
 
 [> Tests
 --------
-Unit tests are available in ./test/.
-To run all the unit tests:
+Unit tests live in ./test/ and run with pytest inside a uv environment
+pinned to the LiteX 2026.04 family:
+
 ```sh
-$ ./setup.py test
+$ uv sync --extra dev
+$ uv run pytest -v
 ```
 
-Tests can also be run individually:
-```sh
-$ python3 -m unittest test.test_name
-```
+[> Documentation
+----------------
+See doc/README.md for the protocol, testing and toolchain documentation.
 
 [> License
 ----------
