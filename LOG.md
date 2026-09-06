@@ -181,6 +181,6 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   its source was used).
 - Receiver bench build 1: WNS -5.54 ns on LiteX's MMCM reset synchroniser
   (sys CSR -> BUFR input clock domain): false path added, build 2 running.
-- 110 tests pass; `hdmi-support` pushed.
+- 107 tests pass; `hdmi-support` pushed.
 - Peer `crazy-fpga-usb2-40` briefly rewrote my mailbox rows by mistake and
   restored them; verified.
