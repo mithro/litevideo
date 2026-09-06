@@ -56,4 +56,4 @@ Notes:
 | `hdmi_tx` (720p bars, audio, format converter) | Vivado 2025.2 | 1795 | 2965 | 0.5 | 12 | 1.206 |
 | `hdmi_tx` | Yosys 0.52 + Vivado P&R | 2123 | 3390 | 0 | 9 | 1.206 |
 | `hdmi_loopback` (tx + fabric receiver + audio extract + capture) | Vivado | 2511 | 5458 | 1 | 12 | 1.206 |
-| `hdmi_rx` 65 MHz (capture front end + receiver + converter + CRCs) | Vivado | 2018 | — | 0.5 | 12 | 0.451 |
+| `hdmi_rx` 65 MHz (capture front end + receiver + converter + CRCs) | Vivado | 2018 | 4325 | 0.5 | 12 | 0.451 |
