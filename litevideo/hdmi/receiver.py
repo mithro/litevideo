@@ -11,7 +11,12 @@ input PHY delivers (``litevideo.input`` ``ChanSync`` outputs, or any
 ``raw_layout`` source; ``valid`` = the channels are synchronised) and
 provides:
 
-* ``source``: ``video_data_layout`` pixels with DE/HSYNC/VSYNC (period decoder);
+* ``raw_source``: ``video_data_layout`` pixels with DE/HSYNC/VSYNC as they are
+  on the wire (period decoder output);
+* ``source``: the same converted to full-range RGB by a ``PixelFormatConverter``
+  driven from the captured AVI InfoFrame (``AVIFormatControl`` defaults; RGB
+  full range assumed until an AVI InfoFrame arrives), 8 characters later;
+  ``control.convert`` = 0 passes the wire values through instead;
 * ``packet_source``: every data island packet with its ECC verdict;
 * AVI InfoFrame capture (CEA-861-D §6.4): pixel encoding, colorimetry,
   quantization range and VIC, with the InfoFrame checksum verified;
@@ -36,6 +41,7 @@ from litevideo.hdmi.period import HDMIPeriodDecoder
 from litevideo.hdmi.island import DataIslandDecoder
 from litevideo.hdmi.audio.extract import AudioExtract
 from litevideo.hdmi.audio.capture import AudioSampleCapture
+from litevideo.csc.convert import PixelFormatConverter, AVIFormatControl, PixelFormat
 
 
 class TimingMeasure(LiteXModule):
@@ -87,6 +93,7 @@ class HDMIReceiver(LiteXModule):
 
         self.control = CSRStorage(fields=[
             CSRField("dvi_mode", 1, reset=0, description="DE from control characters only (no preamble tracking)."),
+            CSRField("convert",  1, reset=1, description="Convert source to full-range RGB per the AVI InfoFrame (0: wire values)."),
         ])
         self.status = CSRStatus(fields=[
             CSRField("synced",  1, description="Input characters valid (channels synchronised)."),
@@ -103,6 +110,7 @@ class HDMIReceiver(LiteXModule):
             CSRField("q",   2, description="RGB quantization: 0 default, 1 limited, 2 full."),
             CSRField("vic", 7, description="Video identification code."),
             CSRField("m",   2, description="Picture aspect ratio."),
+            CSRField("yq",  2, description="YCC quantization range (CEA-861-E)."),
             CSRField("valid", 1, description="An AVI InfoFrame with a good ECC has been received."),
             CSRField("checksum_ok", 1, description="Its InfoFrame checksum was correct."),
         ])
@@ -121,9 +129,10 @@ class HDMIReceiver(LiteXModule):
 
         self.period = period = ClockDomainsRenamer("pix")(HDMIPeriodDecoder())
         self.island = dec = ClockDomainsRenamer("pix")(DataIslandDecoder())
+        self.raw_source = stream.Endpoint(video_data_layout)
         self.comb += [
             self.sink.connect(period.sink),
-            period.source.connect(self.source),
+            period.source.connect(self.raw_source),
             dec.active.eq(period.island_active),
             dec.first.eq(period.island_first),
             dec.nibble0.eq(period.nibble0),
@@ -134,6 +143,7 @@ class HDMIReceiver(LiteXModule):
         ctl = Signal(len(self.control.storage))
         self.specials += MultiReg(self.control.storage, ctl, "pix")
         self.comb += period.dvi_mode.eq(ctl[0])
+        convert = ctl[1]
 
         # Timing.
         self.measure = tm = ClockDomainsRenamer("pix")(TimingMeasure())
@@ -142,7 +152,7 @@ class HDMIReceiver(LiteXModule):
 
         # AVI InfoFrame capture with checksum verification.
         p = dec.source
-        avi_y, avi_c, avi_q, avi_m, avi_vic = Signal(2), Signal(2), Signal(2), Signal(2), Signal(7)
+        avi_y, avi_c, avi_q, avi_m, avi_vic, avi_yq = Signal(2), Signal(2), Signal(2), Signal(2), Signal(7), Signal(2)
         avi_valid, avi_csum_ok, avi_count = Signal(), Signal(), Signal(32)
         pb = [p.header[0:8], p.header[8:16], p.header[16:24]]
         for k in range(4):
@@ -151,11 +161,39 @@ class HDMIReceiver(LiteXModule):
         csum = Signal(12)
         self.comb += csum.eq(sum(pb[:3 + 14]))          # HB0..HB2, PB0..PB13
         is_avi = p.valid & p.ecc_ok & (p.header[0:8] == PacketType.AVI_INFOFRAME)
-        pb1, pb2, pb3, pb4 = p.sub0[8:16], p.sub0[16:24], p.sub0[24:32], p.sub0[32:40]
+        pb1, pb2, pb3, pb4, pb5 = p.sub0[8:16], p.sub0[16:24], p.sub0[24:32], p.sub0[32:40], p.sub0[40:48]
         self.sync.pix += If(is_avi,
             avi_y.eq(pb1[5:7]), avi_c.eq(pb2[6:8]), avi_m.eq(pb2[4:6]), avi_q.eq(pb3[2:4]), avi_vic.eq(pb4[0:7]),
+            avi_yq.eq(pb5[6:8]),
             avi_valid.eq(1), avi_csum_ok.eq(csum[0:8] == 0), avi_count.eq(avi_count + 1),
         )
+
+        # Wire format -> full-range RGB, as the AVI InfoFrame declares it.
+        self.converter = conv = ClockDomainsRenamer("pix")(PixelFormatConverter())
+        self.avi_rules = rules = ClockDomainsRenamer("pix")(AVIFormatControl())
+        valid_d = Signal(conv.latency)
+        self.sync.pix += valid_d.eq(Cat(period.source.valid, valid_d))
+        ps = period.source
+        self.comb += [
+            rules.y.eq(Mux(avi_valid, avi_y, PixelFormat.RGB)), rules.c.eq(avi_c), rules.q.eq(Mux(avi_valid, avi_q, 2)),
+            rules.vic.eq(avi_vic), rules.yq.eq(avi_yq),
+            conv.sink.de.eq(ps.de), conv.sink.hsync.eq(ps.hsync), conv.sink.vsync.eq(ps.vsync),
+            conv.sink.r.eq(ps.r), conv.sink.g.eq(ps.g), conv.sink.b.eq(ps.b),
+            If(convert,
+                conv.fmt_in.eq(rules.fmt),
+                conv.rgb_in_limited.eq(rules.rgb_limited),
+            ).Else(
+                conv.fmt_in.eq(PixelFormat.RGB),
+                conv.rgb_in_limited.eq(0),
+            ),
+            conv.colorimetry.eq(rules.colorimetry),
+            conv.ycc_limited.eq(rules.ycc_limited),
+            conv.fmt_out.eq(PixelFormat.RGB),
+            conv.rgb_out_limited.eq(0),
+            self.source.valid.eq(valid_d[-1]),
+            self.source.de.eq(conv.source.de), self.source.hsync.eq(conv.source.hsync), self.source.vsync.eq(conv.source.vsync),
+            self.source.r.eq(conv.source.r), self.source.g.eq(conv.source.g), self.source.b.eq(conv.source.b),
+        ]
 
         # Counters and histogram.
         hist = [Signal(16) for _ in range(8)]
@@ -172,7 +210,7 @@ class HDMIReceiver(LiteXModule):
             MultiReg(tm.vtotal,  self.timing.fields.vtotal),
             MultiReg(avi_y, self.avi.fields.y), MultiReg(avi_c, self.avi.fields.c),
             MultiReg(avi_q, self.avi.fields.q), MultiReg(avi_vic, self.avi.fields.vic),
-            MultiReg(avi_m, self.avi.fields.m),
+            MultiReg(avi_m, self.avi.fields.m), MultiReg(avi_yq, self.avi.fields.yq),
             MultiReg(avi_valid, self.avi.fields.valid), MultiReg(avi_csum_ok, self.avi.fields.checksum_ok),
             MultiReg(tm.frames, self.frames.status),
             MultiReg(dec.island_count, self.islands.status),
