@@ -35,6 +35,15 @@
 
 ### Task 1: live syncs in the island encoder
 
+**Status: already landed on `hdmi-support` by the phase-1 review fixes** (commit
+"hdmi/island/encoder: live HSYNC/VSYNC, minimum control period after an
+island, clamp max_packets", with `test_live_syncs_inside_island`). Verify with
+`git log --oneline -8` and `uv run pytest test/test_hdmi_island_encoder.py -q`,
+then skip to Task 2. The encoder now also stays busy for
+`MIN_ISLAND_TO_PREAMBLE` characters after an island (`GAP` state) and clamps
+`max_packets` to 18; `model.island_tokens` takes `syncs=` (one (hsync, vsync)
+per character). Kept below for reference only.
+
 **Files:** `litevideo/hdmi/island/encoder.py`, `test/test_hdmi_island_encoder.py`
 
 HDMI §5.2.3.1: every island character carries the current HSYNC/VSYNC on channel 0 bits 0 and 1. The phase-1 encoder latched them at island start; with islands anchored 12 characters after the HSYNC leading edge the sync pulse (40 characters at 720p) ends inside the island, so the latch would misreport it.
@@ -179,7 +188,6 @@ def frame_tokens(timing, nframes=1, islands=None, pixels=None):
     vtotal = va + vf + vs + vb
     islands = islands or {}
     out = []
-    disparity = [0, 0, 0]
     for f in range(nframes):
         for y in range(vtotal):
             vsync = 1 if va + vf <= y < va + vf + vs else 0
@@ -190,7 +198,9 @@ def frame_tokens(timing, nframes=1, islands=None, pixels=None):
             else:
                 row = pixels[y]
             if active:
-                for (c0, c1, c2) in video_tokens(row, disparity):
+                # Disparity restarts at 0 on every line: the TMDS encoder resets it
+                # during blanking (DVI 1.0 Figure 3-5).
+                for (c0, c1, c2) in video_tokens(row):
                     out.append((c0, c1, c2, 1, 0, vsync))
             else:
                 for _ in range(ha):
@@ -203,18 +213,10 @@ def frame_tokens(timing, nframes=1, islands=None, pixels=None):
             packets = islands.get(y)
             if packets:
                 start = hf + MIN_CONTROL_PERIOD
-                toks = island_tokens(packets, hsync=1, vsync=vsync)
-                # syncs are live inside the island: rebuild channel 0 per character
-                for i, (c0, c1, c2) in enumerate(toks):
-                    hsync = blank[start + i][1]
-                    if i < PREAMBLE_LENGTH:
-                        c0 = control_tokens[(vsync << 1) | hsync]
-                    elif i < PREAMBLE_LENGTH + GUARD_BAND_LENGTH or i >= len(toks) - GUARD_BAND_LENGTH:
-                        c0 = terc4_encode(data_gb_ch0_nibble(hsync, vsync))
-                    else:
-                        n0 = terc4_decode(c0) & 0b1100 | (vsync << 1) | hsync
-                        c0 = terc4_encode(n0)
-                    blank[start + i][0] = (c0, c1, c2)
+                n = island_length(len(packets))
+                toks = island_tokens(packets, syncs=[(blank[start + i][1], vsync) for i in range(n)])
+                for i, t in enumerate(toks):
+                    blank[start + i][0] = t
             if next_active:
                 for i in range(PREAMBLE_LENGTH):
                     x = hf + hs + hb - PREAMBLE_LENGTH - GUARD_BAND_LENGTH + i
@@ -464,7 +466,7 @@ avi_fields_layout = [
     ("c",   2), ("m", 2), ("r", 4),                    # PB2
     ("itc", 1), ("ec", 3), ("q", 2), ("sc", 2),        # PB3
     ("vic", 7),                                        # PB4
-    ("yq",  2), ("cn", 2), ("pr", 4),                  # PB5
+    ("yq",  2), ("cn", 2), ("pr", 4),                  # PB5 (YQ/CN are CEA-861-E additions, 0 in 861-D)
     ("bar_top", 16), ("bar_bottom", 16), ("bar_left", 16), ("bar_right", 16),   # PB6..PB13
 ]
 
@@ -589,7 +591,11 @@ from litevideo.hdmi.island import DataIslandDecoder
 
 from test.common import stream_inserter
 
-TIMING = dict(hactive=32, hfront=6, hsync=8, hback=60, vactive=3, vfront=1, vsync=1, vback=2)
+# hsync + hback = 88 characters from the HSYNC edge to DE: room for one packet per
+# island (88 - 12 - 4 - 10 - 12 - 2 = 48 -> 1). With hback=60 no island fits.
+TIMING = dict(hactive=32, hfront=6, hsync=8, hback=80, vactive=3, vfront=1, vsync=1, vback=2)
+LINE = sum(TIMING[k] for k in ("hactive", "hfront", "hsync", "hback"))
+VTOTAL = sum(TIMING[k] for k in ("vactive", "vfront", "vsync", "vback"))
 
 
 class DUT(Module):
@@ -628,7 +634,7 @@ def run_framer(timing, nframes, packets, valid_rand_packets=0):
     dut = DUT()
     beats = video_beats(timing, nframes)
     pbeats = [{"header": p.header, **{f"sub{k}": p.subpackets[k] for k in range(4)}} for p in packets]
-    rx = {"video": [], "packets": [], "periods": [], "errors": 0}
+    rx = {"video": [], "packets": [], "periods": [], "errors": 0, "max_packets": 0}
 
     @passive
     def collect():
@@ -645,11 +651,15 @@ def run_framer(timing, nframes, packets, valid_rand_packets=0):
                 for k in range(4):
                     subs.append((yield getattr(dut.dec.source, f"sub{k}")))
                 rx["packets"].append((model.Packet.from_words(header, subs), (yield dut.dec.source.ecc_ok)))
+            rx["max_packets"] = (yield dut.framer.max_packets)
             yield
 
+    # The packet inserter is passive: if placement never happens the video
+    # inserter still ends the simulation and the assertions report it, instead
+    # of the test hanging on ``packet_sink.ready``.
     run_simulation(dut, [
         stream_inserter(dut.framer.sink, beats, drain=40),
-        stream_inserter(dut.framer.packet_sink, pbeats, valid_rand=valid_rand_packets, drain=0),
+        passive(stream_inserter)(dut.framer.packet_sink, pbeats, valid_rand=valid_rand_packets, drain=0),
         collect(),
     ])
     return dut, beats, rx
@@ -666,6 +676,8 @@ class TestHDMIFramer(unittest.TestCase):
 
     def test_islands_delivered_and_placed(self):
         prng = random.Random(41)
+        # 3 frames x 7 lines = 21 island slots minus the first line (timing not
+        # yet measured) and the 3 VSYNC lines: 12 packets fit, one per island.
         packets = [model.Packet([prng.randrange(256) for _ in range(3)],
                                 [[prng.randrange(256) for _ in range(7)] for _ in range(4)]) for _ in range(12)]
         dut, beats, rx = run_framer(TIMING, nframes=3, packets=packets)
@@ -675,16 +687,20 @@ class TestHDMIFramer(unittest.TestCase):
         # Video is untouched.
         expected = [(b["r"], b["g"], b["b"]) for b in beats if b["de"]]
         self.assertEqual(rx["video"], expected)
-        # No island on frame 1 (timing not yet measured on line 0) and none on the VSYNC line.
         periods = rx["periods"]
-        line = sum(TIMING[k] for k in ("hactive", "hfront", "hsync", "hback"))
-        self.assertNotIn(Period.DATA_ISLAND, periods[:line])
+        # No island on the first line (timing not yet measured).
+        self.assertNotIn(Period.DATA_ISLAND, periods[:LINE])
+        # No island on the line where VSYNC rises (Extended Control Period, Table 5-4).
+        vsync_line = TIMING["vactive"] + TIMING["vfront"]
+        for f in range(3):
+            start = (f * VTOTAL + vsync_line) * LINE
+            self.assertNotIn(Period.DATA_ISLAND, periods[start:start + LINE], f"frame {f}")
 
     def test_control_period_rules(self):
-        prng = random.Random(42)
-        packets = [model.Packet.null() for _ in range(40)]
+        packets = [model.Packet.null() for _ in range(8)]      # fewer than the ~10 slots in 2 frames
         dut, beats, rx = run_framer(TIMING, nframes=2, packets=packets)
         periods = rx["periods"]
+        self.assertEqual(len(rx["packets"]), 8)
         # Every run of CONTROL between a trailing guard band and a video preamble is >= 4,
         # and every CONTROL run is >= 12 except the one directly before a video preamble
         # (preamble + that run form one control period >= 12).
@@ -704,7 +720,7 @@ class TestHDMIFramer(unittest.TestCase):
                     self.assertGreaterEqual(n, MIN_ISLAND_TO_PREAMBLE)
                 if nxt == Period.DATA_PREAMBLE:
                     self.assertGreaterEqual(n, MIN_CONTROL_PERIOD)
-        self.assertGreaterEqual(dut.framer.max_packets_value, 1)
+        self.assertGreaterEqual(rx["max_packets"], 1)
 
     def test_dvi_mode_has_no_preambles(self):
         dut = DUT()
@@ -726,8 +742,6 @@ class TestHDMIFramer(unittest.TestCase):
         self.assertNotIn(Period.VIDEO_PREAMBLE, periods)
         self.assertNotIn(Period.DATA_PREAMBLE, periods)
 ```
-
-`max_packets_value` is a test hook: the framer stores the last computed value in a Python attribute-free way; expose it as the Signal `self.max_packets` and read it in the test with `(yield dut.framer.max_packets)` inside `collect()` instead (adjust the assertion to check the last collected value ≥ 1).
 
 - [ ] **Step 2: Implement**
 
@@ -770,11 +784,12 @@ from litevideo.hdmi.common import *
 from litevideo.hdmi.island.encoder import DataIslandEncoder
 
 LOOKAHEAD = PREAMBLE_LENGTH + GUARD_BAND_LENGTH   # 10
-ENCODER_LATENCY = 4                               # litevideo.output.hdmi.encoder.Encoder
+DELAY = LOOKAHEAD + 1     # the preamble counter starts one cycle after the undelayed DE edge
+ENCODER_LATENCY = 4       # litevideo.output.hdmi.encoder.Encoder: four registered stages
 
 
 class HDMIFramer(LiteXModule):
-    latency = LOOKAHEAD + ENCODER_LATENCY
+    latency = DELAY + ENCODER_LATENCY
 
     def __init__(self):
         self.sink        = stream.Endpoint(video_data_layout)
@@ -795,13 +810,13 @@ class HDMIFramer(LiteXModule):
 
         # Delay line: undelayed sink -> delayed pixel/sync/DE (delayed time).
         names = ["de", "hsync", "vsync", "r", "g", "b"]
-        stages = [Record([(n, len(getattr(sink, n))) for n in names]) for _ in range(LOOKAHEAD)]
+        stages = [Record([(n, len(getattr(sink, n))) for n in names]) for _ in range(DELAY)]
         prev = sink
         for st in stages:
             for n in names:
                 self.sync += getattr(st, n).eq(getattr(prev, n))
             prev = st
-        d = stages[-1]        # delayed by LOOKAHEAD
+        d = stages[-1]        # delayed by DELAY = 11: pre_cnt runs 1..10 on the 10 characters before d.de rises
 
         # Video preamble window: 8 characters starting when the undelayed DE rises,
         # then 2 guard band characters, then the delayed DE is high.
@@ -845,12 +860,20 @@ class HDMIFramer(LiteXModule):
                      ).Elif(npk > MAX_PACKETS_PER_ISLAND, self.max_packets.eq(MAX_PACKETS_PER_ISLAND)
                      ).Else(self.max_packets.eq(npk))
 
+        # Extended Control Period (Table 5-4): the first island slot after a
+        # VSYNC leading edge is skipped. ``ecp_pending`` remembers the edge until
+        # the next HSYNC edge, which arms ``ecp_line`` for that line's slot.
         vsync_r = Signal()
         self.sync += vsync_r.eq(d.vsync)
-        ecp_line = Signal()      # no island on the line where VSYNC rose
+        vs_edge = d.vsync & ~vsync_r
+        ecp_pending = Signal()
+        ecp_line = Signal()
         self.sync += [
-            If(d.vsync & ~vsync_r, ecp_line.eq(1)),
-            If(hs_edge & ~(d.vsync & ~vsync_r), ecp_line.eq(0)),
+            If(vs_edge, ecp_pending.eq(1)),
+            If(hs_edge,
+                ecp_line.eq(ecp_pending | vs_edge),
+                ecp_pending.eq(0),
+            ),
         ]
 
         self.island = island = DataIslandEncoder()
@@ -909,9 +932,9 @@ class HDMIFramer(LiteXModule):
         ]
 ```
 
-Check `Encoder` (litevideo/output/hdmi/encoder.py) really has 4 cycles from `d/c/de` to `out` before relying on `ENCODER_LATENCY`: write a five-line probe in `tmp/` that pulses `de` and counts cycles until `out` changes from a control token; delete it afterwards. If it is 4, keep; otherwise set the constant accordingly and note it in the docstring.
+`Encoder` (litevideo/output/hdmi/encoder.py) has four registered stages from `d/c/de` to `out` (`c`/`de` are delayed three times then registered with the output), verified by the plan review with `test_model_matches_litex_tmds_encoder`-style probing; `ENCODER_LATENCY = 4` is correct. The plan review also confirmed that with `DELAY = 10` the second guard band character overwrote the first pixel of every line, hence `DELAY = 11`.
 
-- [ ] **Step 3: Run** `uv run pytest test/test_hdmi_framer.py -v`. Expected: 4 passed. Debugging guidance: (a) if video pixels are shifted by a constant, the override pipeline depth differs from the encoder latency: fix `ENCODER_LATENCY`; (b) if the period decoder reports `error`, dump the first 200 characters of `framer.source` and compare with `model.frame_tokens` around the first island; (c) if `test_control_period_rules` fails on the ≥12 rule before an island, the island is anchored too early: `since_hs == MIN_CONTROL_PERIOD` must count from the HSYNC edge in delayed time and the front porch adds to it, so check the model's `hfront`.
+- [ ] **Step 3: Run** `uv run pytest test/test_hdmi_framer.py -v`. Expected: 4 passed (verified by the plan review with these fixes). Debugging guidance: (a) if the first pixel of each line is missing, the guard band override overlaps the first pixel: check `DELAY` against where `pre_cnt` starts; (b) if the period decoder reports `error`, dump the first 200 characters of `framer.source` and compare with `model.frame_tokens` around the first island; (c) if a test hangs, the packet inserter is not passive or no island slot has room (`max_packets` 0): check `TIMING`.
 
 - [ ] **Step 4: Commit** `hdmi: add framer with video preamble/guard band insertion and HSYNC-anchored island placement`.
 
@@ -1087,7 +1110,13 @@ class CRG(LiteXModule):
 class BenchSoC(SoCMini):
     def __init__(self, variant="a7-100", toolchain="vivado", sys_clk_freq=50e6, ident="LiteVideo NeTV2 bench", **kwargs):
         platform = kosagi_netv2.Platform(variant=variant, toolchain=toolchain)
-        SoCMini.__init__(self, platform, sys_clk_freq, ident=ident, ident_version=True, **kwargs)
+        # The LiteX argument parser injects cpu_type="vexriscv", with_uart=True,
+        # with_timer=True, an SRAM size and ident_version into soc_argdict;
+        # this bench has no CPU (CSRs come over uartbone on the same "serial"
+        # pads the SoC UART would take), so override them here.
+        kwargs.update(cpu_type="None", with_uart=False, with_timer=False, integrated_sram_size=0,
+                      ident=ident, ident_version=True)
+        SoCMini.__init__(self, platform, sys_clk_freq, **kwargs)
         self.crg = CRG(platform, sys_clk_freq)
         self.add_uartbone(uart_name="serial", baudrate=115200)
 
@@ -1098,13 +1127,16 @@ def bench_main(soc_cls, description, default_build_name):
     args = parser.parse_args()
     soc = soc_cls(variant=args.variant, toolchain=args.toolchain, **parser.soc_argdict)
     builder_kwargs = parser.builder_argdict
-    builder_kwargs.setdefault("output_dir", f"build/{default_build_name}")
-    builder_kwargs.setdefault("csr_csv", f"build/{default_build_name}/csr.csv")
+    # builder_argdict already carries output_dir=None / csr_csv=None, so setdefault is a no-op.
+    if builder_kwargs.get("output_dir") is None:
+        builder_kwargs["output_dir"] = f"build/{default_build_name}"
+    if builder_kwargs.get("csr_csv") is None:
+        builder_kwargs["csr_csv"] = f"build/{default_build_name}/csr.csv"
     builder = Builder(soc, **builder_kwargs)
     builder.build(**parser.toolchain_argdict, run=args.build)
 ```
 
-After writing it, elaborate once without building (`uv run python -m bench.netv2.hdmi_tx` after Task 8) to see whether `S7MMCM` accepts `margin=2e-3` for 74.25 MHz from 50 MHz; if it cannot find a config, relax to `margin=5e-3` and record the achieved frequency the MMCM prints (`compute_config` logs it) in `doc/transmitter.md`. `SoCMini` with `add_uartbone` and no CPU is the standard LiteX pattern; confirm `parser.soc_argdict` does not inject `cpu_type` (it may; pass `cpu_type="None"` explicitly in `BenchSoC` if the build complains).
+The plan review elaborated this: `S7MMCM` finds a config at `margin=2e-3` (it chose `divclk_divide=4`, `clkfbout_mult=59.375`: VCO 742.19 MHz, pix 74.22 MHz, -0.04 %, not the 743.75/74.375 MHz of the comment; the comment should say "LiteX picks the closest legal configuration, record what `compute_config` prints"). Elaborate once without building (`uv run python -m bench.netv2.hdmi_tx` after Task 8) and record the achieved frequencies in `doc/transmitter.md`.
 
 - [ ] **Step 3: `bench/netv2/host/uartbone.py`** (self-contained; runs on the Pi with only pyserial):
 
@@ -1214,7 +1246,7 @@ if __name__ == "__main__":
 
 **Files:** `bench/netv2/hdmi_tx.py`, `bench/netv2/hdmi_loopback.py`, `litevideo/output/hdmi/s7.py` (reuse), `bench/netv2/frame_crc.py`
 
-- [ ] **Step 1: `bench/netv2/frame_crc.py`**: `FrameCRC` in `pix`: CRC-32 (IEEE 802.3 polynomial 0x04C11DB7, init 0xFFFFFFFF, final XOR 0xFFFFFFFF) over the 24-bit `{r,g,b}` of every DE pixel, latched at VSYNC rise into `crc` with `frame` count; use `litex.soc.cores.crc` if it offers a suitable core, else a 24-bit-per-cycle table-free implementation (24 iterations of the bit-serial CRC unrolled). Python reference `frame_crc(pixels)` in the same file for the host script (colour bars are deterministic so the expected CRC is computable from `ColorBarsPattern` semantics: 8 bars of `hres/8` pixels each row).
+- [ ] **Step 1: `bench/netv2/frame_crc.py`**: `FrameCRC` in `pix` with plain input Signals `de`, `vsync`, `r`, `g`, `b` (tapped from a `video_data_layout` source with `self.comb += [crc.de.eq(src.de), ...]`; never `Record.eq` or a second `connect`, which would double-drive `ready`): CRC-32 (IEEE 802.3 polynomial 0x04C11DB7, init 0xFFFFFFFF, final XOR 0xFFFFFFFF) over the 24-bit `{r,g,b}` of every DE pixel, latched at VSYNC rise into `crc` with a `frame` count. `litex.soc.cores.crc` does not exist in 2026.04; implement the 24-bit-per-cycle update as the bit-serial CRC unrolled 24 times (a plain Python loop building the XOR expressions). Python reference `frame_crc(pixels)` in the same file for the host script (colour bars are deterministic: 8 bars of `hres/8` pixels per row, colours from `ColorBarsPattern`).
 
 - [ ] **Step 2: `bench/netv2/hdmi_tx.py`**
 
@@ -1250,8 +1282,10 @@ class HDMITxSoC(BenchSoC):
         self.phy = S7HDMIOutPHY(pads, mode="raw")
         self.comb += self.hdmi_tx.source.connect(self.phy.sink)
 
-        self.frame_crc = FrameCRC()
-        self.comb += self.frame_crc.sink.eq(self.bars.source)   # see Step 1 for the exact interface
+        self.frame_crc = ClockDomainsRenamer("pix")(FrameCRC())
+        src = self.bars.source
+        self.comb += [self.frame_crc.de.eq(src.de & src.valid), self.frame_crc.vsync.eq(src.vsync),
+                      self.frame_crc.r.eq(src.r), self.frame_crc.g.eq(src.g), self.frame_crc.b.eq(src.b)]
 
         platform.add_period_constraint(self.crg.cd_pix.clk,   1e9 / 74.25e6)
         platform.add_period_constraint(self.crg.cd_pix5x.clk, 1e9 / 371.25e6)
@@ -1299,6 +1333,6 @@ if __name__ == "__main__":
 
 ### Task 12: documentation and review
 
-- [ ] **Step 1: `doc/transmitter.md`**: block diagram (VTG/pattern → HDMITransmitter[framer, scheduler, AVI, GCP] → PHY), the placement algorithm with the numbers for 720p/1080p/480p (`hs2de`, `max_packets`), latencies, CSR table (from `csr.csv`), clocking (fractional MMCM values actually chosen), what T1/T4 proved with links to the reports.
+- [ ] **Step 1: `doc/transmitter.md`**: block diagram (VTG/pattern → HDMITransmitter[framer, scheduler, AVI, GCP] → raw PHY), the placement algorithm with the numbers for the LiteX timings (720p: `h_sync_offset=220`, sync 40, so `hs2de = 150` and `max_packets = 3`; 1080p: 44 + 148 = 192 → 4; 640x480: 96 + 48 = 144 → 3), latencies, CSR table (from `csr.csv`), clocking (the MMCM values actually chosen), what T1/T4 proved with links to the reports. State that the design spec's `HDMIOut` wrapper (§5.9) is deferred: this phase connects `HDMITransmitter.source` to the existing `S7HDMIOutPHY(mode="raw")` (its `phy_layout("raw")` param fields are simply left unassigned), and the wrapper comes with the receiver integration in phase 5.
 - [ ] **Step 2:** Update `doc/README.md` and README features; `LOG.md`/`TODO.md` on `claude-notes`.
 - [ ] **Step 3:** Push; CI green; dispatch a review sub-agent over `git diff <phase-1 tip>...hdmi-support` asking for FSM edge cases in the framer (DE rising within 10 characters of an HSYNC edge, islands on the last line before DE, `hs2de` changing between lines), latency alignment, CSR/CDC correctness, and resource use; fix findings; commit.
