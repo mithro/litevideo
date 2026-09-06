@@ -46,11 +46,14 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [ ] `HDMIIn`-style wrapper (frame buffer / DMA sink) and stream audio sink; receiver code review by sub-agent
 
 ## Phase 6: open-source flows
-- [ ] Yosys → Vivado for tx
-- [ ] openXC7 for tx; rx attempt with measured blockers; fork fixes
+- [x] Yosys → Vivado for tx: timing clean, T4 pass on hardware (2026-09-07)
+- [~] openXC7 for tx: snap nextpnr 0.8.2 rejects the OSERDES cascade -> built nextpnr-xilinx master locally (~/github/openXC7); snap prjxray-db lacks OSERDES DDR.W10 -> openXC7/prjxray-db master sparse clone; chipdb regenerated; bitstream build in progress; nextpnr timing says pix domain 68 MHz vs 74.25 needed (its model), to verify on hardware
+- [ ] rx attempt on openXC7 (ISERDES from IDELAY, MMCM); fork fixes if needed; doc/toolchains.md
 
 ## Phase 7: optimisation and review
-- [ ] resource tables per core and part, sub-agent optimisation pass
+- [x] `scripts/resources.py` + `doc/resources.md` (per-core Yosys estimates, bench P&R numbers)
+- [ ] sub-agent optimisation pass (candidates: serialised packet interface to shrink the 248-bit scheduler/encoder muxes; framer override muxes; constant-matrix DSP avoidance)
+- [ ] sub-agent code reviews of phases 3-5
 
 ## Blocked on the user
 - [!] T2 cabled loopback (needs HDMI cable on rpi5-netv2)

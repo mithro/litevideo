@@ -184,3 +184,26 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
 - 107 tests pass; `hdmi-support` pushed.
 - Peer `crazy-fpga-usb2-40` briefly rewrote my mailbox rows by mistake and
   restored them; verified.
+
+## 2026-09-07 (04:30 ACST)
+
+- **T3 receiver on hardware**: after cycling the Pi's DRM connector the Pi
+  reads the bench EDID and outputs 1280x720 HDMI; the receiver measures
+  1280x720/1650x749 (vtotal off-by-one fixed in code, rebuild pending), 60 fps,
+  islands with 0 ECC errors, ACR 6144/74250, Audio InfoFrame, and the Pi's
+  aplay 1 kHz tone is captured on both channels. Report
+  `doc/reports/2026-09-07-netv2-rx-720p.md`. Earlier at 65 MHz DVI: 1024x768 /
+  1344x806 exact, stable frame CRC.
+- **Phase 6**: Yosys+Vivado tx bench passes T4 (bars + audio). openXC7: the
+  snap's nextpnr 0.8.2 lacks OSERDESE2 master/slave support; built
+  openXC7/nextpnr-xilinx master in ~/github/openXC7 (cmake, BUILD_PYTHON=OFF,
+  system python) and regenerated the xc7a100tfgg484 chipdb (5 min). The
+  snap's prjxray-db lacks OSERDES DDR.W10; openXC7/prjxray-db master has it
+  (sparse clone, artix7). fasm2frames with the pure-Python fasm parser is
+  slow (>10 min). nextpnr's timing model reports the pix domain at 68 MHz
+  (74.25 needed); hardware will tell.
+- **Phase 7 started**: `scripts/resources.py` (Yosys per-core table) and
+  `doc/resources.md`. Scheduler is ~3 LUT/bit for a 5:1 mux of 248 bits (a
+  one-hot rewrite measured the same, reverted); serialising the packet
+  interface is the real saving.
+- Sub-agents still unavailable (rate limit); reviews deferred.
