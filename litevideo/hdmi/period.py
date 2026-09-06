@@ -10,15 +10,27 @@ syncs, DE, pixel data and data island nibbles out.
 The state machine follows HDMI 1.3 §5.2 (Figure 5-3): a Control Period ends
 with an 8-character Preamble (Table 5-2) that says whether a Video Data
 Period (2-character Video Guard Band, Table 5-5) or a Data Island (Leading
-Guard Band, packets, Trailing Guard Band, Table 5-6) follows. HSYNC/VSYNC are
-taken from channel 0's control value during Control Periods (§5.4.2 Table
-5-34) and from channel 0 TERC4 bits 0 and 1 during islands and their guard
-bands (§5.2.3.1); they hold during video. DE is 1 during Video Data Periods.
+Guard Band, packets, Trailing Guard Band, Table 5-6) follows. Guard bands
+are exactly two characters long (§5.2.2.1, §5.2.3.3), so once the first
+guard band character is recognised the second is consumed by count, not by
+value: the video guard band characters are also legal pixel values
+(B,G,R = 0xAB,0x55,0xAB encodes to them at any disparity), so matching them
+would swallow pixels.
+
+HSYNC/VSYNC are taken from channel 0's control value during Control Periods
+(§5.4.2 Table 5-34) and from channel 0 TERC4 bits 0 and 1 during islands and
+their guard bands (§5.2.3.1), in the same character; they hold during video.
+DE is 1 during Video Data Periods.
 
 Convention: ``period`` reports the *new* period on the character that causes
 the transition (the first preamble character is already VIDEO_PREAMBLE /
 DATA_PREAMBLE, the first non-guard character after a guard band is already
 VIDEO / DATA_ISLAND).
+
+``sink.valid`` means "the character stream is locked": while it is low the
+state machine is held in CONTROL and nothing is reported, so a gap inside an
+island discards that island (as a loss of lock would). The sink must supply
+one character per cycle while ``valid`` is high.
 
 ``dvi_mode`` bypasses the preamble tracking for DVI sources (which never send
 preambles or guard bands): DE is then simply "channel 0 is not a control
@@ -57,26 +69,29 @@ class HDMIPeriodDecoder(LiteXModule):
         # # #
 
         self.comb += self.sink.ready.eq(1)
+        valid = Signal()
+        self.sync += valid.eq(self.sink.valid)     # aligned with the character decoders
 
         self.dec0 = dec0 = TMDSCharacterDecoder(0)
         self.dec1 = dec1 = TMDSCharacterDecoder(1)
         self.dec2 = dec2 = TMDSCharacterDecoder(2)
         self.comb += [dec0.raw.eq(self.sink.c0), dec1.raw.eq(self.sink.c1), dec2.raw.eq(self.sink.c2)]
 
-        all_control = dec0.control & dec1.control & dec2.control
-        any_control = dec0.control | dec1.control | dec2.control
-        preamble    = Cat(dec1.c, dec2.c)   # {ch2 D1, ch2 D0, ch1 D1, ch1 D0}
-        video_pre   = all_control & (preamble == ((PREAMBLE_VIDEO[1] << 2) | PREAMBLE_VIDEO[0]))
-        data_pre    = all_control & (preamble == ((PREAMBLE_DATA[1] << 2) | PREAMBLE_DATA[0]))
+        all_control  = dec0.control & dec1.control & dec2.control
+        any_control  = dec0.control | dec1.control | dec2.control
+        preamble     = Cat(dec1.c, dec2.c)   # {ch2 D1, ch2 D0, ch1 D1, ch1 D0}
+        video_pre    = all_control & (preamble == ((PREAMBLE_VIDEO[1] << 2) | PREAMBLE_VIDEO[0]))
+        data_pre     = all_control & (preamble == ((PREAMBLE_DATA[1] << 2) | PREAMBLE_DATA[0]))
         all_video_gb = dec0.video_gb & dec1.video_gb & dec2.video_gb
         data_gb      = dec1.data_gb & dec2.data_gb
 
-        period = Signal(3)
+        period    = Signal(3)
         in_island = Signal()
-        first = Signal()
-        error = Signal()
+        first     = Signal()
+        error     = Signal()
 
-        self.fsm = fsm = FSM(reset_state="CONTROL")
+        self.fsm = fsm = ResetInserter()(FSM(reset_state="CONTROL"))
+        self.comb += fsm.reset.eq(~valid)
         fsm.act("CONTROL",
             period.eq(Period.CONTROL),
             If(video_pre, period.eq(Period.VIDEO_PREAMBLE), NextState("VIDEO_PREAMBLE")),
@@ -84,12 +99,12 @@ class HDMIPeriodDecoder(LiteXModule):
         )
         fsm.act("VIDEO_PREAMBLE",
             period.eq(Period.VIDEO_PREAMBLE),
-            If(all_video_gb, period.eq(Period.VIDEO_GUARD), NextState("VIDEO_GUARD"))
+            If(all_video_gb, period.eq(Period.VIDEO_GUARD), NextState("VIDEO_GUARD_2"))
             .Elif(~video_pre, period.eq(Period.CONTROL), NextState("CONTROL")),
         )
-        fsm.act("VIDEO_GUARD",
+        fsm.act("VIDEO_GUARD_2",                 # second guard band character, by count
             period.eq(Period.VIDEO_GUARD),
-            If(~all_video_gb, period.eq(Period.VIDEO), NextState("VIDEO")),
+            NextState("VIDEO"),
         )
         fsm.act("VIDEO",
             period.eq(Period.VIDEO),
@@ -97,52 +112,62 @@ class HDMIPeriodDecoder(LiteXModule):
         )
         fsm.act("DATA_PREAMBLE",
             period.eq(Period.DATA_PREAMBLE),
-            If(data_gb, period.eq(Period.DATA_LEADING_GUARD), NextState("DATA_LEADING_GUARD"))
+            If(data_gb, period.eq(Period.DATA_LEADING_GUARD), NextState("DATA_LEADING_GUARD_2"))
             .Elif(~data_pre, period.eq(Period.CONTROL), NextState("CONTROL")),
         )
-        fsm.act("DATA_LEADING_GUARD",
+        fsm.act("DATA_LEADING_GUARD_2",          # second guard band character, by count
             period.eq(Period.DATA_LEADING_GUARD),
-            If(~data_gb, period.eq(Period.DATA_ISLAND), in_island.eq(1), first.eq(1), NextState("DATA_ISLAND")),
+            NextValue(first, 1),
+            NextState("DATA_ISLAND"),
         )
         fsm.act("DATA_ISLAND",
             period.eq(Period.DATA_ISLAND),
             in_island.eq(1),
-            If(data_gb, period.eq(Period.DATA_TRAILING_GUARD), in_island.eq(0), NextState("DATA_TRAILING_GUARD"))
+            NextValue(first, 0),
+            If(data_gb, period.eq(Period.DATA_TRAILING_GUARD), in_island.eq(0), NextState("DATA_TRAILING_GUARD_2"))
             .Elif(any_control, period.eq(Period.CONTROL), in_island.eq(0), error.eq(1), NextState("CONTROL")),
         )
-        fsm.act("DATA_TRAILING_GUARD",
+        fsm.act("DATA_TRAILING_GUARD_2",         # second guard band character, by count
             period.eq(Period.DATA_TRAILING_GUARD),
-            If(~data_gb, period.eq(Period.CONTROL), NextState("CONTROL")),
+            NextState("CONTROL"),
         )
 
-        # Syncs: control value on channel 0 during control periods, TERC4 bits
-        # 0/1 during islands and their guard bands, held during video.
-        hsync = Signal()
-        vsync = Signal()
-        self.sync += [
+        # Syncs for the current character: channel 0's control value during
+        # control periods, TERC4 bits 0/1 during islands and their guard bands,
+        # otherwise the held value.
+        hsync_hold = Signal()
+        vsync_hold = Signal()
+        hsync_now  = Signal()
+        vsync_now  = Signal()
+        in_data = Signal()
+        self.comb += [
+            in_data.eq(period >= Period.DATA_PREAMBLE),
             If(dec0.control,
-                hsync.eq(dec0.c[0]), vsync.eq(dec0.c[1]),
-            ).Elif(dec0.terc4_valid & (period >= Period.DATA_PREAMBLE),
-                hsync.eq(dec0.terc4[0]), vsync.eq(dec0.terc4[1]),
+                hsync_now.eq(dec0.c[0]), vsync_now.eq(dec0.c[1]),
+            ).Elif(dec0.terc4_valid & in_data,
+                hsync_now.eq(dec0.terc4[0]), vsync_now.eq(dec0.terc4[1]),
+            ).Else(
+                hsync_now.eq(hsync_hold), vsync_now.eq(vsync_hold),
             ),
         ]
+        self.sync += [hsync_hold.eq(hsync_now), vsync_hold.eq(vsync_now)]
 
         de = Signal()
         self.comb += de.eq(Mux(self.dvi_mode, ~dec0.control, period == Period.VIDEO))
 
         # Registered outputs.
         self.sync += [
-            self.period.eq(period),
-            self.island_active.eq(in_island & self.sink.valid),
-            self.island_first.eq(first),
+            self.period.eq(Mux(valid, period, Period.CONTROL)),
+            self.island_active.eq(in_island & valid),
+            self.island_first.eq(first & in_island & valid),
             self.nibble0.eq(dec0.terc4),
             self.nibble1.eq(dec1.terc4),
             self.nibble2.eq(dec2.terc4),
-            self.error.eq(error),
-            self.source.valid.eq(self.sink.valid),
-            self.source.de.eq(de),
-            self.source.hsync.eq(Mux(dec0.control, dec0.c[0], hsync)),
-            self.source.vsync.eq(Mux(dec0.control, dec0.c[1], vsync)),
+            self.error.eq(error & valid),
+            self.source.valid.eq(valid),
+            self.source.de.eq(de & valid),
+            self.source.hsync.eq(hsync_now),
+            self.source.vsync.eq(vsync_now),
             self.source.b.eq(dec0.d),
             self.source.g.eq(dec1.d),
             self.source.r.eq(dec2.d),
