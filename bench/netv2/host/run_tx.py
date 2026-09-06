@@ -44,7 +44,11 @@ def check_audio_wav(path, freq=1000.0, tolerance_hz=5.0, min_snr_db=30.0):
         peak = int(np.argmax(spec))
         peak_hz = peak * rate / len(x)
         rest = spec.copy()
-        lo, hi = max(0, peak - 5), peak + 6
+        # Ignore the window skirt and close-in sidebands (the source runs at
+        # 47.96 kHz from the 74.219 MHz MMCM clock and the capture card
+        # resamples to 48 kHz, which puts +-33 Hz sidebands ~38 dB down).
+        guard = int(60 * len(x) / rate)
+        lo, hi = max(0, peak - guard), peak + guard + 1
         rest[lo:hi] = 0
         snr = 20 * np.log10(spec[peak] / max(rest.max(), 1e-9))
         rms = np.sqrt(np.mean(x ** 2)) / 32768
