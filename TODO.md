@@ -31,7 +31,7 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] plan written (review sub-agent hit a rate limit; self-reviewed)
 - [x] extract, packetizer (embed), ACR, tone source, IEC 60958 status, docs (CSR/DMA sources deferred)
 - [x] T1 tone round trip (lossless at 47964 frames/s) and T4 Magewell audio capture (999.3 Hz, 44 dB) on rpi5, 2026-09-07
-- [ ] phase-3 code review by sub-agent (rate limit)
+- [x] phases 3-5 code review by sub-agent (2026-09-07): no gateware bugs; two doc fixes and a two-clock CDC test added
 
 ## Phase 4: pixel formats
 - [x] colorimetry model (BT.601/709, full/limited), CSCMatrix, 4:2:2 wire cores, PixelFormatConverter, AVIFormatControl
@@ -42,19 +42,19 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 ## Phase 5: receiver integration
 - [x] `HDMIReceiver` (period + island decoders, AVI capture, timing measure, audio extract FIFO), `doc/receiver.md`
 - [x] `S7MMCMClocking`, `bench/netv2/hdmi_rx.py` (hdmi_in 1, 720p-preferring EDID), `run_rx.py` + on-Pi `align`
-- [~] T3 on rpi5 against the Pi 5 HDMI-A-2 source at 65 MHz (build 2 running: build 1 failed timing on LiteX's MMCM reset CDC); then 74.25 MHz after EDID re-probe
+- [x] T3 on rpi5 against the Pi 5 HDMI-A-2 source: 65 MHz DVI (1024x768 exact) and 74.25 MHz HDMI 720p with audio, all checks pass with the channel-sync eye scan (2026-09-07 06:10)
 - [ ] `HDMIIn`-style wrapper (frame buffer / DMA sink) and stream audio sink; receiver code review by sub-agent
 
 ## Phase 6: open-source flows
 - [x] Yosys → Vivado for tx: timing clean, T4 pass on hardware (2026-09-07)
 - [x] openXC7 for tx: full bench (converter, audio) pixel-exact on the Magewell, audio identical to the Vivado control (2026-09-07 05:40). Needed: nextpnr-xilinx master + 2 local fixes (MMCM PHASE default, TMDS slew) on branch litevideo-fixes in ~/github/openXC7/nextpnr-xilinx; openXC7/prjxray-db master (OSERDES W10); integer MMCM; -nodsp (DSP48E1 cascade broken, reproduced by bench/netv2/csc_test)
-- [ ] push the nextpnr fixes to a mithro fork (no upstream PR without the user's say-so); fix the DSP cascade in nextpnr; seed sweep of the tx build
-- [~] rx attempt on openXC7 (build running)
+- [x] nextpnr fixes pushed to github.com/mithro/nextpnr-xilinx branch litevideo-fixes (no upstream PR)
+- [ ] fix the DSP48E1 cascade in nextpnr; IBUFDS_DIFF_OUT for xc7 (receiver blocker); seed sweep of the tx build
+- [x] rx attempt on openXC7: blocked by IBUFDS_DIFF_OUT (xc7 packer lacks it), documented in doc/toolchains.md
 
 ## Phase 7: optimisation and review
 - [x] `scripts/resources.py` + `doc/resources.md` (per-core Yosys estimates, bench P&R numbers)
-- [ ] sub-agent optimisation pass (candidates: serialised packet interface to shrink the 248-bit scheduler/encoder muxes; framer override muxes; constant-matrix DSP avoidance)
-- [ ] sub-agent code reviews of phases 3-5
+- [~] sub-agent optimisation pass running (2026-09-07 06:00)
 
 ## Blocked on the user
 - [!] T2 cabled loopback (needs HDMI cable on rpi5-netv2)

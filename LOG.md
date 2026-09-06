@@ -229,3 +229,20 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
 - Tools built: ~/github/openXC7/{nextpnr-xilinx,prjxray-db,chipdb}; `uartbone.py
   batch` runs register scripts on the Pi in one ssh.
 - Receiver bench on openXC7 building.
+
+## 2026-09-07 (06:15 ACST)
+
+- **Receiver T3 complete**: with the rebuilt 74.25 MHz bench (vtotal fix) all
+  checks pass: 1280x720 in 1650x750, AVI (RGB limited Q=1, VIC 4), islands
+  with 0 ECC errors, Pi audio extracted. The HDMI2USB phase-detector loop
+  walks out of the eye on this source (its verdict is inverted relative to
+  the window: "too early" inside); a tap sweep with the channel synchroniser
+  as the indicator shows 5-tap windows one bit period apart, so `uartbone.py
+  align --eye` (joint sweep then per-channel refinement, after an MMCM +
+  IDELAY reset) is now the default in run_rx.
+- openXC7 receiver: blocked by missing IBUFDS_DIFF_OUT support in the xc7
+  packer (documented). nextpnr fixes pushed to mithro/nextpnr-xilinx
+  (branch litevideo-fixes), no upstream PR.
+- Sub-agent code review of phases 3-5: no gateware bugs found; doc fixes and
+  a two-clock AsyncFIFO test added. Optimisation review in progress.
+- 110 tests pass.
