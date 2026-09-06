@@ -74,14 +74,16 @@ three of the multiplies and uses half a BRAM tile.
 
 ### openXC7 environment
 
-The snap-derived toolchain from `fpgas-online-test-designs` lives in
-`~/github/mithro/fpgas-online-test-designs/.venv/toolchains/openxc7`:
+`source scripts/openxc7-env.sh` sets `PATH`, `CHIPDB`, `PRJXRAY_DB_DIR` and
+`NEXTPNR_XILINX_PYTHON_DIR` for the working combination (locally built
+nextpnr-xilinx with the fixes below, openXC7/prjxray-db master, a chipdb
+regenerated from it, and the snap's fasm2frames/xc7frames2bit); then
 
-    export PATH=$T/bin:$PATH
-    export CHIPDB=$T/chipdb
-    export PRJXRAY_DB_DIR=$T/squashfs-root/opt/nextpnr-xilinx/external/prjxray-db
-    export NEXTPNR_XILINX_PYTHON_DIR=$T/squashfs-root/opt/nextpnr-xilinx/python
-    uv run scripts/limited.py -- uv run python -m bench.netv2.hdmi_tx --build --toolchain openxc7
+    uv run scripts/limited.py --memory-max 12G -- uv run python -m bench.netv2.hdmi_tx --build --toolchain openxc7 \
+        --output-dir build/netv2-hdmi-tx-openxc7 --csr-csv build/netv2-hdmi-tx-openxc7/csr.csv
+
+The snap alone (`fpgas-online-test-designs/.venv/toolchains/openxc7`) does
+not work for this design, see the findings.
 
 `bench/netv2/openxc7.py` applies the litex-boards/openXC7 device-name fixup
 (`xc7a100t-fgg484-2` -> `xc7a100tfgg484-2`), a chipdb symlink and the
