@@ -245,4 +245,4 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   (branch litevideo-fixes), no upstream PR.
 - Sub-agent code review of phases 3-5: no gateware bugs found; doc fixes and
   a two-clock AsyncFIFO test added. Optimisation review in progress.
-- 110 tests pass.
+- 108 tests pass.
