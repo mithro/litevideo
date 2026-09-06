@@ -34,13 +34,16 @@ class DataIslandDecoder(LiteXModule):
         self.nibble2 = Signal(4)
 
         self.source = stream.Endpoint(packet_rx_layout)
-        self.packet_count = Signal(32)
+        self.island_count    = Signal(32)
+        self.packet_count    = Signal(32)
         self.ecc_error_count = Signal(32)
 
         # # #
 
         char = Signal(5)
         hbit = self.nibble0[2]
+
+        self.sync += If(self.active & self.first, self.island_count.eq(self.island_count + 1))
 
         # Character counter: restarts at the first character of an island, wraps every 32.
         self.sync += If(~self.active, char.eq(0)).Elif(self.first, char.eq(1)).Else(char.eq(char + 1))
