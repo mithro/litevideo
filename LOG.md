@@ -133,3 +133,24 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   to rerun when they release Vivado. Observation: after TaskStop killed the
   build wrapper, a Vivado child was found outside the systemd scope; the
   wrapper itself verifies fine, so check `/proc/<pid>/cgroup` after launch.
+
+## 2026-09-07 (afternoon)
+
+- **Phase 5 receiver in simulation.** `litevideo/hdmi/receiver.py`:
+  `HDMIReceiver` = period decoder + island decoder + AVI latch +
+  `TimingMeasure` + `AudioExtract` with a 512-deep `AsyncFIFO` into `sys`
+  drained over CSRs; `test/test_hdmi_receiver.py`; 81 tests pass.
+- `litevideo/input/clocking.py` gains `S7MMCMClocking` (LiteX `S7MMCM`,
+  any input rate as one parameter, honours `Inverted()` pads). Receiver bench
+  `bench/netv2/hdmi_rx.py` on hdmi_in 1 with the Pi 5's HDMI-A-2 as the
+  source (EDID-less 1024x768 at 65 MHz today; the bench EDID prefers 720p60 so
+  a re-probe should move it to 74.25 MHz). Elaborates: VCO 1300 MHz, pix /20,
+  pix1p25x /16, pix5x /4.
+- Host side: `uartbone.py align` runs the HDMI2USB `calibrate_delays` /
+  `adjust_phase` loop on the Pi itself (per-register ssh would take minutes);
+  `run_rx.py` = lock, align, timing, fps, histogram, AVI, ACR checks.
+  `doc/receiver.md` written; T3 tier redefined onto hdmi_in 1.
+- Still holding Vivado at the HDCP session's request (their route was being
+  OOM-killed); two builds queued: audio loopback (phase 3 hardware) and rx 65 MHz.
+- Peer `crazy-fpga-usb2-40` loaded a volatile USB link-test bitstream on
+  rpi5-netv2 (HDMI pins untouched, ~1 minute); no conflict with our idle state.

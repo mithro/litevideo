@@ -36,7 +36,10 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [ ] colorimetry/range parameterisation, converter, AVI-driven rx path, docs
 
 ## Phase 5: receiver integration
-- [ ] `HDMIIn` sources, InfoFrame capture, `hdmi_rx` target
+- [x] `HDMIReceiver` (period + island decoders, AVI capture, timing measure, audio extract FIFO), `doc/receiver.md`
+- [x] `S7MMCMClocking`, `bench/netv2/hdmi_rx.py` (hdmi_in 1, 720p-preferring EDID), `run_rx.py` + on-Pi `align`
+- [ ] T3 on rpi5 against the Pi 5 HDMI-A-2 source at 65 MHz (build pending Vivado slot); then 74.25 MHz after EDID re-probe
+- [ ] `HDMIIn`-style wrapper (frame buffer / DMA sink) and stream audio sink; receiver code review by sub-agent
 
 ## Phase 6: open-source flows
 - [ ] Yosys → Vivado for tx
@@ -47,5 +50,5 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 
 ## Blocked on the user
 - [!] T2 cabled loopback (needs HDMI cable on rpi5-netv2)
-- [!] T3 real source (rpi3-netv2 reserved by HDCP work)
+- [!] T3 on a second unit: rpi3-netv2 reserved by HDCP work (rpi5's Pi 5 output now serves as the source)
 - [!] T4 real sink (MS2109 missing)
