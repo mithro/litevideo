@@ -1,11 +1,13 @@
+#
+# This file is part of LiteVideo.
+#
+# Copyright (c) 2016-2020 Florent Kermarrec <florent@enjoy-digital.fr>
+# Copyright (c) 2026 Tim 'mithro' Ansell <me@mith.ro>
+# SPDX-License-Identifier: BSD-2-Clause
+
+"""Python models of the colour-space conversions, used by test/test_csc.py."""
+
 from PIL import Image
-
-import random
-from copy import deepcopy
-
-from migen import *
-
-from litex.soc.interconnect.stream import *
 
 class RAWImage:
     def __init__(self, coefs, filename=None, size=None):
@@ -26,20 +28,17 @@ class RAWImage:
         if filename is not None:
             self.open(filename)
 
-
     def open(self, filename):
         img = Image.open(filename)
         if self.size is not None:
-            img = img.resize((self.size, self.size), Image.ANTIALIAS)
+            img = img.resize((self.size, self.size), Image.LANCZOS)
         r, g, b = zip(*list(img.getdata()))
         self.set_rgb(r, g, b)
-
 
     def save(self, filename):
         img = Image.new("RGB" ,(self.size, self.size))
         img.putdata(list(zip(self.r, self.g, self.b)))
         img.save(filename)
-
 
     def set_rgb(self, r, g, b):
         self.r = r
@@ -47,17 +46,14 @@ class RAWImage:
         self.b = b
         self.length = len(r)
 
-
     def set_ycbcr(self, y, cb, cr):
         self.y = y
         self.cb = cb
         self.cr = cr
         self.length = len(y)
 
-
     def set_data(self, data):
         self.data = data
-
 
     def pack_rgb(self):
         self.data = []
@@ -67,7 +63,6 @@ class RAWImage:
             data |= (self.b[i] & 0xff) << 0
             self.data.append(data)
         return self.data
-
 
     def pack_ycbcr(self):
         self.data = []
@@ -87,7 +82,6 @@ class RAWImage:
             self.data.append(data)
         return self.data
 
-
     def unpack_rgb(self):
         self.r = []
         self.g = []
@@ -97,7 +91,6 @@ class RAWImage:
             self.g.append((data >> 8) & 0xff)
             self.b.append((data >> 0) & 0xff)
         return self.r, self.g, self.b
-
 
     def unpack_ycbcr(self):
         self.y = []
@@ -131,7 +124,6 @@ class RAWImage:
             self.cr.append(int(self.coefs["cd"]*(r-yraw) + self.coefs["coffset"]))
         return self.y, self.cb, self.cr
 
-
     # Wikipedia implementation used as reference
     def rgb2ycbcr(self):
         self.y = []
@@ -143,7 +135,6 @@ class RAWImage:
             self.cr.append(int(0.5*r - 0.4187*g - 0.0813*b + 128))
         return self.y, self.cb, self.cr
 
-
     # Model for our implementation
     def ycbcr2rgb_model(self):
         self.r = []
@@ -154,7 +145,6 @@ class RAWImage:
             self.g.append(int(y - self.coefs["yoffset"] + (cb - self.coefs["coffset"])*self.coefs["bcoef"] + (cr - self.coefs["coffset"])*self.coefs["ccoef"]))
             self.b.append(int(y - self.coefs["yoffset"] + (cb - self.coefs["coffset"])*self.coefs["dcoef"]))
         return self.r, self.g, self.b
-
 
     # Wikipedia implementation used as reference
     def ycbcr2rgb(self):
