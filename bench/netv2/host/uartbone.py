@@ -77,6 +77,45 @@ class CSR:
         self.bone.write_words(addr, words)
 
 
+def align_channel(csr, prefix, slave_taps, iterations=300, settle=10):
+    """Phase-align one litevideo S7DataCapture channel (the HDMI2USB
+    ``hdmi_in`` firmware loop): reset both IDELAYs, offset the slave by
+    ``slave_taps`` (about a quarter bit), then step master and slave together
+    while the phase detector reports too late / too early. Returns
+    (synced, iterations used, master taps, slave taps, last phase)."""
+    import time
+    DLY_RST, M_INC, M_DEC, S_INC, S_DEC = 1, 2, 4, 8, 16
+    TOO_LATE, TOO_EARLY = 1, 2
+    csr.write(f"{prefix}_cap_dly_ctl", DLY_RST)
+    for _ in range(slave_taps):
+        csr.write(f"{prefix}_cap_dly_ctl", S_INC)
+    csr.write(f"{prefix}_cap_phase_reset", 1)
+    stable = 0
+    phase = 0
+    for i in range(iterations):
+        time.sleep(0.002)
+        phase = csr.read(f"{prefix}_cap_phase")
+        if phase & TOO_LATE:
+            csr.write(f"{prefix}_cap_dly_ctl", M_DEC | S_DEC)
+            stable = 0
+        elif phase & TOO_EARLY:
+            csr.write(f"{prefix}_cap_dly_ctl", M_INC | S_INC)
+            stable = 0
+        else:
+            stable += 1
+        csr.write(f"{prefix}_cap_phase_reset", 1)
+        if stable >= settle and csr.read(f"{prefix}_charsync_char_synced"):
+            break
+    return {
+        "synced": csr.read(f"{prefix}_charsync_char_synced"),
+        "iterations": i + 1,
+        "master_taps": csr.read(f"{prefix}_cap_cntvalueout_m"),
+        "slave_taps": csr.read(f"{prefix}_cap_cntvalueout_s"),
+        "phase": phase,
+        "ctl_pos": csr.read(f"{prefix}_charsync_ctl_pos"),
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", default="/dev/ttyAMA0")
@@ -88,6 +127,8 @@ def main():
     w = sub.add_parser("write"); w.add_argument("name"); w.add_argument("value")
     d = sub.add_parser("drain", help="pop up to COUNT words from a FIFO exposed as data/valid/pop CSRs")
     d.add_argument("data"); d.add_argument("valid"); d.add_argument("pop"); d.add_argument("count", type=int)
+    a = sub.add_parser("align", help="phase-align HDMI input channels data0..data2 (litevideo S7DataCapture)")
+    a.add_argument("--slave-taps", type=int, default=5, help="initial slave IDELAY offset (about a quarter bit)")
     args = p.parse_args()
     csrmap = CSRMap(args.csr)
     if args.cmd == "regs":
@@ -103,6 +144,8 @@ def main():
             words.append(csr.read(args.data))
             csr.write(args.pop, 1)
         print(json.dumps(words))
+    elif args.cmd == "align":
+        print(json.dumps({f"data{n}": align_channel(csr, f"data{n}", args.slave_taps) for n in range(3)}))
     else:
         csr.write(args.name, int(args.value, 0))
 
