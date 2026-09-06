@@ -148,14 +148,22 @@ class Packet:
         return f"Packet({[hex(b) for b in self.header_bytes]}, {self.subpacket_bytes})"
 
 
-def packet_chars(packet, corrupt_header_ecc=False, corrupt_subpacket_ecc=None):
-    """32 (header_bit, ch1 nibble, ch2 nibble) triples of one packet."""
+def packet_chars(packet, corrupt_header_ecc=False, corrupt_subpacket_ecc=None, corrupt_data_bit=None):
+    """32 (header_bit, ch1 nibble, ch2 nibble) triples of one packet.
+
+    ``corrupt_data_bit`` = ("header", bit) or (subpacket index, bit) flips one
+    data bit while keeping the ECC of the original data, so a checker must
+    report an error."""
     hecc = packet.header_ecc ^ (0x01 if corrupt_header_ecc else 0)
     header = packet.header | (hecc << 24)
+    if corrupt_data_bit is not None and corrupt_data_bit[0] == "header":
+        header ^= 1 << corrupt_data_bit[1]
     subs = []
     for k, (data, ecc) in enumerate(zip(packet.subpackets, packet.subpacket_ecc)):
         if corrupt_subpacket_ecc == k:
             ecc ^= 0x01
+        if corrupt_data_bit is not None and corrupt_data_bit[0] == k:
+            data ^= 1 << corrupt_data_bit[1]
         subs.append(data | (ecc << 56))
     chars = []
     for c in range(PACKET_LENGTH):
@@ -176,19 +184,38 @@ def control_chars(hsync, vsync, ctl=(0, 0)):
     return (control_tokens[(vsync << 1) | hsync], control_tokens[ctl[0]], control_tokens[ctl[1]])
 
 
-def island_tokens(packets, hsync=0, vsync=0, **corrupt):
-    """Preamble + leading guard band + packets + trailing guard band."""
+def island_length(npackets):
+    return PREAMBLE_LENGTH + GUARD_BAND_LENGTH + PACKET_LENGTH * npackets + GUARD_BAND_LENGTH
+
+
+def island_tokens(packets, hsync=0, vsync=0, syncs=None, **corrupt):
+    """Preamble + leading guard band + packets + trailing guard band.
+
+    HSYNC/VSYNC are carried on every character (§5.2.3.1): constants
+    ``hsync``/``vsync``, or ``syncs`` = one (hsync, vsync) pair per character."""
     assert 1 <= len(packets) <= MAX_PACKETS_PER_ISLAND
-    gb0 = terc4_encode(data_gb_ch0_nibble(hsync, vsync))
-    toks = [control_chars(hsync, vsync, PREAMBLE_DATA)] * PREAMBLE_LENGTH
-    toks += [(gb0, data_gb_token, data_gb_token)] * GUARD_BAND_LENGTH
+    n = island_length(len(packets))
+    if syncs is None:
+        syncs = [(hsync, vsync)] * n
+    assert len(syncs) == n
+    toks = []
+    i = 0
+    for _ in range(PREAMBLE_LENGTH):
+        h, v = syncs[i]; i += 1
+        toks.append(control_chars(h, v, PREAMBLE_DATA))
+    for _ in range(GUARD_BAND_LENGTH):
+        h, v = syncs[i]; i += 1
+        toks.append((terc4_encode(data_gb_ch0_nibble(h, v)), data_gb_token, data_gb_token))
     first = True
     for p in packets:
         for hbit, n1, n2 in packet_chars(p, **corrupt):
-            n0 = ((0 if first else 1) << 3) | (hbit << 2) | (vsync << 1) | hsync
+            h, v = syncs[i]; i += 1
+            n0 = ((0 if first else 1) << 3) | (hbit << 2) | (v << 1) | h
             first = False
             toks.append((terc4_encode(n0), terc4_encode(n1), terc4_encode(n2)))
-    toks += [(gb0, data_gb_token, data_gb_token)] * GUARD_BAND_LENGTH
+    for _ in range(GUARD_BAND_LENGTH):
+        h, v = syncs[i]; i += 1
+        toks.append((terc4_encode(data_gb_ch0_nibble(h, v)), data_gb_token, data_gb_token))
     return toks
 
 
@@ -204,30 +231,40 @@ def video_tokens(pixels, disparity=None):
     return toks
 
 
-def line_tokens(hactive, hblank, packets=(), hsync_start=None, hsync_len=None, vsync=0, pixels=None):
+def line_tokens(hactive, hblank, packets=(), hsync_start=None, hsync_len=None, vsync=0, pixels=None,
+                return_syncs=False):
     """One line: active video, then blanking with an optional island, then the
-    video preamble and guard band. Returns (tokens, expected periods)."""
+    video preamble and guard band. HSYNC is a positive pulse of ``hsync_len``
+    characters starting ``hsync_start`` characters into the blanking; it is
+    carried live through the island. Returns (tokens, expected periods) or,
+    with ``return_syncs``, (tokens, periods, [(hsync, vsync)] per character)."""
     hsync_start = hactive + 4 if hsync_start is None else hactive + hsync_start
     hsync_len = 8 if hsync_len is None else hsync_len
     if pixels is None:
         pixels = [((i * 7) & 0xFF, (i * 13) & 0xFF, (i * 29) & 0xFF) for i in range(hactive)]
     toks = video_tokens(pixels)
     periods = [Period.VIDEO] * hactive
+    syncs = [(0, vsync)] * hactive
 
     def hs(x):
         return 1 if hsync_start <= x < hsync_start + hsync_len else 0
 
     x = hactive
     tail = PREAMBLE_LENGTH + GUARD_BAND_LENGTH
-    island = island_tokens(list(packets), hsync=hs(x + MIN_CONTROL_PERIOD), vsync=vsync) if packets else []
-    # control, island, control (>= 4), video preamble, video guard band
     n_ctrl_before = MIN_CONTROL_PERIOD
+    island = []
+    if packets:
+        n = island_length(len(packets))
+        island = island_tokens(list(packets), vsync=vsync,
+                               syncs=[(hs(x + n_ctrl_before + i), vsync) for i in range(n)])
+    # control, island, control (>= 4), video preamble, video guard band
     n_ctrl_after = hblank - n_ctrl_before - len(island) - tail
     assert n_ctrl_after >= MIN_ISLAND_TO_PREAMBLE, "blanking too short for this island"
     for _ in range(n_ctrl_before):
-        toks.append(control_chars(hs(x), vsync)); periods.append(Period.CONTROL); x += 1
+        toks.append(control_chars(hs(x), vsync)); periods.append(Period.CONTROL); syncs.append((hs(x), vsync)); x += 1
     for i, t in enumerate(island):
         toks.append(t)
+        syncs.append((hs(x), vsync))
         if i < PREAMBLE_LENGTH:
             periods.append(Period.DATA_PREAMBLE)
         elif i < PREAMBLE_LENGTH + GUARD_BAND_LENGTH:
@@ -238,9 +275,11 @@ def line_tokens(hactive, hblank, packets=(), hsync_start=None, hsync_len=None, v
             periods.append(Period.DATA_ISLAND)
         x += 1
     for _ in range(n_ctrl_after):
-        toks.append(control_chars(hs(x), vsync)); periods.append(Period.CONTROL); x += 1
+        toks.append(control_chars(hs(x), vsync)); periods.append(Period.CONTROL); syncs.append((hs(x), vsync)); x += 1
     for _ in range(PREAMBLE_LENGTH):
-        toks.append(control_chars(hs(x), vsync, PREAMBLE_VIDEO)); periods.append(Period.VIDEO_PREAMBLE); x += 1
+        toks.append(control_chars(hs(x), vsync, PREAMBLE_VIDEO)); periods.append(Period.VIDEO_PREAMBLE); syncs.append((hs(x), vsync)); x += 1
     for _ in range(GUARD_BAND_LENGTH):
-        toks.append(tuple(video_gb_tokens)); periods.append(Period.VIDEO_GUARD); x += 1
+        toks.append(tuple(video_gb_tokens)); periods.append(Period.VIDEO_GUARD); syncs.append((hs(x), vsync)); x += 1
+    if return_syncs:
+        return toks, periods, syncs
     return toks, periods
