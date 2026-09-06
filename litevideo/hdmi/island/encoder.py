@@ -13,11 +13,19 @@ on channels 1/2, TERC4(1,1,VSYNC,HSYNC) on channel 0, §5.2.3.3), one to
 ``max_packets`` packets of 32 TERC4 characters (§5.2.3.4: header bit on
 channel 0 bit 2, BCH block k on bit k of channels 1 and 2, ECC generated
 serially with ``bch_step``, §5.2.3.5), then the Trailing Guard Band.
-Channel 0 bit 3 is 0 on the first character of the island and 1 on every
-other packet character (HDMI 1.4b CTS requirement). The caller (the framer)
-raises ``start`` only where an island fits and supplies ``max_packets``; it
-must send at least ``MIN_ISLAND_TO_PREAMBLE`` control characters after
-``source.valid`` falls (§5.2.3.2, Figure 5-3).
+
+* Channel 0 bit 3 is 0 on the first character of the island and 1 on every
+  other packet character (HDMI 1.3 Figure 5-3, HDMI 1.4b CTS).
+* The ``hsync``/``vsync`` inputs are carried live on every character
+  (§5.2.3.1), so the caller must keep them aligned with the island.
+* After the trailing guard band the encoder stays busy for
+  ``MIN_ISLAND_TO_PREAMBLE`` characters and ignores ``start``, so two islands
+  are always separated by at least 4 + 8 = 12 control characters
+  (§5.2.3.2 tS,min). The caller still owns the placement relative to video:
+  it raises ``start`` only where the island plus the following control period,
+  video preamble and guard band fit before DE.
+* ``max_packets`` is clamped to 18 (§5.2.3.2). ``source.ready`` is ignored:
+  the island streams at one character per cycle once started.
 """
 
 from migen import *
@@ -50,8 +58,10 @@ class DataIslandEncoder(LiteXModule):
         count  = Signal(5)    # characters within the current phase
         npkt   = Signal(5)    # packets sent in this island
         first  = Signal()     # current character is the first of the island
-        hsync_l = Signal()
-        vsync_l = Signal()
+
+        max_packets = Signal(5)
+        self.comb += max_packets.eq(Mux(self.max_packets > MAX_PACKETS_PER_ISLAND,
+                                        MAX_PACKETS_PER_ISLAND, self.max_packets))
 
         def load_packet():
             return [
@@ -69,11 +79,12 @@ class DataIslandEncoder(LiteXModule):
                 n1[k].eq(Mux(count < 28, subs[k][0], secc[k][0])),
                 n2[k].eq(Mux(count < 28, subs[k][1], secc[k][1])),
             ]
-        n0 = Cat(hsync_l, vsync_l, hbit, ~first)
+        syncs = Cat(self.hsync, self.vsync)
+        n0 = Cat(syncs, hbit, ~first)
 
         terc4 = Array(terc4_tokens)
-        ctl0 = Array(control_tokens)[Cat(hsync_l, vsync_l)]
-        gb0  = terc4[Cat(hsync_l, vsync_l, C(0b11, 2))]
+        ctl0 = Array(control_tokens)[syncs]
+        gb0  = Array(terc4_tokens[12:])[syncs]      # TERC4(1, 1, VSYNC, HSYNC), §5.2.3.3
         pre  = (ctl0, control_tokens[PREAMBLE_DATA[0]], control_tokens[PREAMBLE_DATA[1]])
         gb   = (gb0, data_gb_token, data_gb_token)
 
@@ -98,10 +109,9 @@ class DataIslandEncoder(LiteXModule):
 
         self.fsm = fsm = FSM(reset_state="IDLE")
         fsm.act("IDLE",
-            If(self.start & self.sink.valid & (self.max_packets != 0),
+            If(self.start & self.sink.valid & (max_packets != 0),
                 self.sink.ready.eq(1),
                 *load_packet(),
-                NextValue(hsync_l, self.hsync), NextValue(vsync_l, self.vsync),
                 NextValue(count, 0), NextValue(npkt, 1),
                 NextState("PREAMBLE"),
             ),
@@ -123,7 +133,7 @@ class DataIslandEncoder(LiteXModule):
             NextValue(count, count + 1),
             If(count == PACKET_LENGTH - 1,
                 NextValue(count, 0),
-                If(self.sink.valid & (npkt < self.max_packets),
+                If(self.sink.valid & (npkt < max_packets),
                     self.sink.ready.eq(1),
                     *load_packet(),
                     NextValue(npkt, npkt + 1),
@@ -135,5 +145,10 @@ class DataIslandEncoder(LiteXModule):
         fsm.act("TRAILING_GUARD",
             self.busy.eq(1), *emit(gb),
             NextValue(count, count + 1),
-            If(count == GUARD_BAND_LENGTH - 1, NextValue(count, 0), NextState("IDLE")),
+            If(count == GUARD_BAND_LENGTH - 1, NextValue(count, 0), NextState("GAP")),
+        )
+        fsm.act("GAP",                               # minimum control period after an island
+            self.busy.eq(1),
+            NextValue(count, count + 1),
+            If(count == MIN_ISLAND_TO_PREAMBLE - 1, NextValue(count, 0), NextState("IDLE")),
         )
