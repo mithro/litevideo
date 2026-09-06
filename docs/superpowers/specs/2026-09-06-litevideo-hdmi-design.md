@@ -1,6 +1,6 @@
 # LiteVideo HDMI support: design
 
-Date: 2026-09-06. Status: draft v2 (after one sub-agent review), written autonomously; decisions the user has
+Date: 2026-09-06. Status: v3, approved by sub-agent review round 2 (advisory points folded in), written autonomously; decisions the user has
 not confirmed are listed in section 3 so they can be overturned cheaply.
 
 ## 1. Goal
@@ -78,7 +78,15 @@ subframe, 28 to 55 for the second). HDMI 1.3 Table 5-13 places the first
 SB5, and all flags in SB6 as `PR CR UR VR PL CL UL VL` (bit 7 to bit 0);
 hdl-util does the same. LiteVideo follows Table 5-13.
 
-Neither finding has been sent to the netv2-fpga session; both will be
+**Finding (guard band on channel 0).** HDMI 1.3 §5.2.3.3: "During the Data
+Island Guard Bands, Channel 0 is encoded as one of four TERC4 values. These
+TERC4 values (D[3:0]) are 0xC, 0xD, 0xE and 0xF, depending upon the values
+of HSYNC and VSYNC"; Table 5-6 lists the fixed token `0b0100110011` for
+channels 1 and 2 only ("0: q_out[9:0] = n.a."). The netv2-fpga encoder sends
+the channel 1/2 token on all three channels. LiteVideo encodes channel 0 as
+TERC4 of {1, 1, VSYNC, HSYNC} during both guard bands.
+
+None of these findings has been sent to the netv2-fpga session; they will be
 reported to the user, who owns both trees.
 
 ### 2.3 LiteX conventions to follow
@@ -220,7 +228,9 @@ they exist, hdl-util's behaviour otherwise).
 
 Replaces the ad-hoc `DecodeTERC4` with a documented state machine over the
 three decoded channels: detects control periods (7-transition tokens), video
-preamble (CTL 0001) and data island preamble (CTL 0101), leading/trailing
+preamble (CTL0=1, CTL1=CTL2=CTL3=0) and data island preamble (CTL0=1,
+CTL2=1, CTL1=CTL3=0; HDMI Table 5-2, written CTL0-first as the spec does),
+leading/trailing
 guard bands, and produces `period` (enum), `de`, `hsync`, `vsync`, the three
 TERC4 nibbles, and a `packet_char_index`. Keeps a DVI fallback (DE from
 non-control tokens) selectable per CSR, as `DecodeTERC4` had. `DecodeTERC4`
@@ -247,8 +257,14 @@ least 12 characters; between an island's trailing guard band and the video
 preamble there are at least 4 control characters; an Extended Control Period
 of at least 32 characters is transmitted at least every 50 ms (Table 5-4),
 which the framer guarantees by keeping one blanking interval per frame free
-of islands; islands are placed only where the whole island plus the trailing
-control period and video preamble fit before DE. The framer offers the
+of islands (sufficient for any frame rate above 20 Hz; conservative, since
+any blanking whose control run before or after an island is at least 32
+characters already qualifies); islands are placed only where the whole
+island plus the trailing control period and video preamble fit before DE.
+§5.2.3.2 also requires at least one island every two video fields while
+video is transmitted: the AVI InfoFrame generator (once per frame) satisfies
+this, and if every packet generator is disabled the scheduler sends one Null
+packet (type 0x00, Table 5-9) per frame instead. The framer offers the
 scheduler the number of packets that fit in the current blanking
 (hdl-util's `max_num_packets_alongside` formula, capped at 18) and accepts
 packets only up to that count. TMDS encoding of active pixels reuses
@@ -277,13 +293,19 @@ optional async FIFO to `sys`; `sample_source` for a CSR drain or a later DMA.
 L/R sample pair, per subpacket), IEC 60958 B/V/U/C/P generation (192-frame
 channel status block, consumer L-PCM, parity over bits 4 to 30), and
 delivery per HDMI §7.8.1: an ASP is transmitted whenever at least one
-complete L/R pair is buffered, with `sample_present` set only for the
-subpackets that carry a pair (partial packets are allowed by §7.8.1), and no
-packet at all when the buffer is empty (the netv2-fpga embedder emits
+complete L/R pair is buffered, with `sample_present` following Table 7-7
+(subpackets filled contiguously from subpacket 0, so the only valid layout-0
+patterns are 0000, 1000, 1100, 1110, 1111 in sp0..sp3 order; partial packets
+are allowed by §7.8.1), and no packet at all when the buffer is empty (the netv2-fpga embedder emits
 silence packets from an empty FIFO, which is what hid its payload problem).
-`ACRGenerator`: constant N/CTS from Table 7-1/7-2 for coherent clocks, or
-measured CTS (count `pix` cycles per N/128 audio-clock cycles, HDMI Figure
-7-1, as hdl-util does). `sources.py`: CSR FIFO (bring-up) and
+`ACRGenerator`: constant N/CTS from Tables 7-1 to 7-3 for coherent clocks,
+or measured CTS following HDMI Figure 7-1: the generator is given a 128·fS
+clock (the audio master clock, as I2S codecs provide) and a divide-by-N
+counter on it produces the CTS strobe; CTS is the number of `pix` cycles
+between strobes. This works for every N in the tables, including N values
+that are not multiples of 128 (4576, 7007, 11648). When only an fS-rate
+strobe is available, N must be a multiple of 128 and the divider is N/128;
+the core asserts this at build time. `sources.py`: CSR FIFO (bring-up) and
 `ToneGenerator` (fabric sine table at a chosen frequency; the hardware test
 signal that needs no host bandwidth).
 
