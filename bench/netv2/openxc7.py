@@ -66,8 +66,10 @@ def prepare_platform(platform):
     ensure_chipdb_symlink(platform)
 
 
-def prepare_soc(soc, nodsp=True):
+def prepare_soc(soc, nodsp=None):
     patch_yosys_template(soc)
+    if nodsp is None:
+        nodsp = os.environ.get("LITEVIDEO_OPENXC7_DSP") is None
     if nodsp:
         # nextpnr-xilinx's DSP48E1 support mis-implements the colour matrix
         # multiplies (blue output became blue AND red on hardware); keep the
