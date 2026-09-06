@@ -55,9 +55,10 @@ class HDMITxSoC(BenchSoC):
         self.comb += [self.frame_crc.de.eq(src.de & src.valid), self.frame_crc.vsync.eq(src.vsync),
                       self.frame_crc.r.eq(src.r), self.frame_crc.g.eq(src.g), self.frame_crc.b.eq(src.b)]
         self.add_tx_status_csrs()
-
-        platform.add_period_constraint(self.crg.cd_pix.clk,   1e9 / PIX_CLK_FREQ)
-        platform.add_period_constraint(self.crg.cd_pix5x.clk, 1e9 / (5 * PIX_CLK_FREQ))
+        # No explicit period constraints on pix/pix5x: Vivado derives them from
+        # the MMCM (S7MMCM constrains its input), and a second create_clock on
+        # the same nets made the pix -> pix5x OSERDES CE paths look like a
+        # 2.1 ns crossing between two slightly different clocks (WNS -1.9 ns).
 
     def add_tx_status_csrs(self):
         from migen.genlib.cdc import MultiReg
