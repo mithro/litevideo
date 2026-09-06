@@ -25,7 +25,7 @@ import shlex
 import subprocess
 
 HOST = "tim@rpi5-netv2.welland.mithis.com"
-REMOTE_DIR = "~/litevideo"
+REMOTE_DIR = "/home/tim/litevideo"
 UART = "/dev/ttyAMA0"
 VIDEO = "/dev/video0"
 ALSA = "hw:XI100DUSBHDMI"
