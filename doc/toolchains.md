@@ -51,6 +51,19 @@ therefore adds `-nodsp` for the open flow unless `LITEVIDEO_OPENXC7_DSP` is
 set. Not yet fixed in nextpnr (the cascade routing/placement in
 `xilinx/pack_dsp*.cc` is the place to look).
 
+**Receiver on openXC7: blocked** (`bench/netv2/hdmi_rx --toolchain openxc7`):
+nextpnr-xilinx stops with `IDELAYE2 'IDELAYE2' has disconnected IDATAIN
+input`. The 7-series capture path (`litevideo/input/datacapture.py`) feeds
+the master and slave IDELAYE2 from the two outputs of an `IBUFDS_DIFF_OUT`,
+and `S7MMCMClocking` uses the same primitive for the clock; nextpnr only
+implements `IBUFDS_DIFF_OUT` for UltraScale (`xilinx/pack_io_xcup.cc`), the
+xc7 packer (`xilinx/pack_io_xc7.cc`) has no handling for the OB output, so
+the slave delay has no driver. Adding it needs the IOB33 differential-output
+input configuration bits (prjxray `IN_DIFF`/`IBUFDS_DIFF_OUT` features) in
+`write_io_config`; the alternative, a slave IDELAY driven from fabric
+(`DELAY_SRC=DATAIN`), is not accepted by the packer either. Left for a later
+tool-fork task.
+
 Practicalities: `fasm2frames` from the snap falls back to the pure-Python
 `fasm` parser (about 4 minutes for this design); the PyPI `fasm` wheel for
 Python 3.12 has no ANTLR accelerator either.
