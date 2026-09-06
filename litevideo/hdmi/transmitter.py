@@ -15,6 +15,16 @@ Packet sources in priority order (HDMI 1.3 §7.8.2): Audio Sample Packets,
 Audio Clock Regeneration, Audio InfoFrame (all three only with
 ``with_audio``), then General Control, then the AVI InfoFrame.
 
+The video sink is full-range RGB (``video_data_layout`` from the LiteX
+pattern generators and frame buffers, or as declared by ``input_format`` /
+``input_rgb_limited``). A ``PixelFormatConverter`` in front of the framer
+produces whatever ``avi_config`` declares (Y: RGB / YCbCr 4:2:2 / 4:4:4; C:
+colorimetry; Q and YQ: quantization ranges, with the CEA-861-D defaults of
+``AVIFormatControl``), so the AVI InfoFrame and the pixels always agree.
+``avi_config.q`` resets to 2 (full-range RGB) so the default output is the
+input untouched; ``dvi_mode`` forces full-range RGB regardless (DVI has no
+AVI InfoFrame). The converter adds 8 characters of latency.
+
 With ``with_audio`` the transmitter carries a built-in tone generator
 (``litevideo.hdmi.audio.sources.ToneGenerator``) as its PCM source: it needs
 ``pix_clk_freq`` to derive the sample rate and picks N/CTS from HDMI Tables
@@ -39,10 +49,17 @@ from litevideo.hdmi.audio.packetizer import AudioSamplePacketizer
 from litevideo.hdmi.audio.acr import ACRGenerator
 from litevideo.hdmi.audio.infoframe import AudioInfoFrameGenerator
 from litevideo.hdmi.audio.sources import ToneGenerator, tone_increment
+from litevideo.csc.convert import PixelFormatConverter, AVIFormatControl, PixelFormat
+
+
+def _field(storage_copy, field):
+    """Slice of a MultiReg'd CSRStorage copy holding one CSRField."""
+    return storage_copy[field.offset:field.offset + field.size]
 
 
 class HDMITransmitter(LiteXModule):
-    def __init__(self, default_vic=4, extra_packet_sinks=0, with_audio=False, pix_clk_freq=None, fs=48000, tone_freq=1000.0):
+    def __init__(self, default_vic=4, extra_packet_sinks=0, with_audio=False, pix_clk_freq=None, fs=48000, tone_freq=1000.0,
+                 input_format=PixelFormat.RGB, input_rgb_limited=False):
         self.sink   = stream.Endpoint(video_data_layout)
         self.source = stream.Endpoint(raw_layout)
 
@@ -62,7 +79,7 @@ class HDMITransmitter(LiteXModule):
             CSRField("r",   4, reset=8, description="Active format aspect (8 = same as picture)."),
             CSRField("itc", 1, reset=0, description="IT content."),
             CSRField("ec",  3, reset=0, description="Extended colorimetry."),
-            CSRField("q",   2, reset=0, description="RGB quantization: 0 default, 1 limited, 2 full (Table 11)."),
+            CSRField("q",   2, reset=2, description="RGB quantization: 0 default (limited except VIC 1), 1 limited, 2 full (Table 11)."),
             CSRField("sc",  2, reset=0, description="Non-uniform scaling."),
             CSRField("vic", 7, reset=default_vic, description="Video identification code (CEA-861-D Table 3)."),
         ])
@@ -82,7 +99,23 @@ class HDMITransmitter(LiteXModule):
         # # #
 
         self.framer = framer = ClockDomainsRenamer("pix")(HDMIFramer())
-        self.comb += [self.sink.connect(framer.sink), framer.source.connect(self.source)]
+        self.comb += framer.source.connect(self.source)
+
+        # Pixel format conversion in front of the framer (valid delayed alongside).
+        self.converter = conv = ClockDomainsRenamer("pix")(PixelFormatConverter())
+        self.avi_rules = rules = ClockDomainsRenamer("pix")(AVIFormatControl())
+        valid_d = Signal(conv.latency)
+        self.sync.pix += valid_d.eq(Cat(self.sink.valid, valid_d))
+        self.comb += [
+            self.sink.ready.eq(1),
+            conv.sink.de.eq(self.sink.de), conv.sink.hsync.eq(self.sink.hsync), conv.sink.vsync.eq(self.sink.vsync),
+            conv.sink.r.eq(self.sink.r), conv.sink.g.eq(self.sink.g), conv.sink.b.eq(self.sink.b),
+            framer.sink.valid.eq(valid_d[-1]),
+            framer.sink.de.eq(conv.source.de), framer.sink.hsync.eq(conv.source.hsync), framer.sink.vsync.eq(conv.source.vsync),
+            framer.sink.r.eq(conv.source.r), framer.sink.g.eq(conv.source.g), framer.sink.b.eq(conv.source.b),
+            conv.fmt_in.eq(input_format),
+            conv.rgb_in_limited.eq(input_rgb_limited),
+        ]
 
         n_audio = 3 if with_audio else 0
         n_sinks = n_audio + extra_packet_sinks + 2
@@ -102,6 +135,22 @@ class HDMITransmitter(LiteXModule):
             MultiReg(self.avi_config2.storage, avi2, "pix"),
         ]
         self.comb += [framer.enable_islands.eq(ctl[0]), framer.dvi_mode.eq(ctl[1])]
+
+        # AVI fields -> converter controls (DVI: plain full-range RGB).
+        fa = self.avi_config.fields
+        self.comb += [
+            rules.y.eq(_field(avi, fa.y)), rules.c.eq(_field(avi, fa.c)), rules.q.eq(_field(avi, fa.q)),
+            rules.vic.eq(_field(avi, fa.vic)), rules.yq.eq(_field(avi2, self.avi_config2.fields.yq)),
+            If(ctl[1],
+                conv.fmt_out.eq(PixelFormat.RGB),
+                conv.rgb_out_limited.eq(0),
+            ).Else(
+                conv.fmt_out.eq(rules.fmt),
+                conv.rgb_out_limited.eq(rules.rgb_limited),
+            ),
+            conv.colorimetry.eq(rules.colorimetry),
+            conv.ycc_limited.eq(rules.ycc_limited),
+        ]
 
         # Frame trigger: VSYNC leading edge at the framer input.
         vsync_r = Signal()
