@@ -112,3 +112,29 @@ def sine_frames(n, freq=1000.0, fs=48000, amplitude=0.5):
         v = round(amplitude * full * math.sin(2 * math.pi * freq * i / fs)) & 0xFFFFFF
         frames.append((v, v))
     return frames
+
+
+# Tone generator model -----------------------------------------------------------------------------
+
+TONE_TABLE_BITS = 8
+
+
+def tone_table(bits=TONE_TABLE_BITS, amplitude=0.5):
+    """Sine ROM used by ToneGenerator: 2**bits entries of 24-bit two's complement."""
+    import math
+    full = (1 << 23) - 1
+    n = 1 << bits
+    return [round(amplitude * full * math.sin(2 * math.pi * i / n)) & 0xFFFFFF for i in range(n)]
+
+
+def tone_sequence(n_frames, tone_increment, bits=TONE_TABLE_BITS, amplitude=0.5):
+    """The (left, right) frames ToneGenerator emits from phase 0: sample i reads
+    the ROM at the top ``bits`` of i * tone_increment (mod 2**32); left = right."""
+    table = tone_table(bits, amplitude)
+    out = []
+    phase = 0
+    for _ in range(n_frames):
+        v = table[phase >> (32 - bits)]
+        out.append((v, v))
+        phase = (phase + tone_increment) & 0xFFFFFFFF
+    return out
