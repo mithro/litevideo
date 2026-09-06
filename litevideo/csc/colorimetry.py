@@ -105,6 +105,13 @@ def ycbcr2rgb_matrix(col, ycc_range=LIMITED, rgb_range=FULL):
     return Matrix(m, offsets, [rgb_range.ymin] * 3, [rgb_range.ymax] * 3)
 
 
+def rgb_range_matrix(in_range, out_range):
+    """RGB full <-> limited range rescaling (a diagonal matrix)."""
+    s = out_range.yscale / in_range.yscale
+    off = out_range.yoffset - s * in_range.yoffset
+    return Matrix([[s, 0, 0], [0, s, 0], [0, 0, s]], [off] * 3, [out_range.ymin] * 3, [out_range.ymax] * 3)
+
+
 def identity_matrix(mins=(0, 0, 0), maxs=(255, 255, 255)):
     return Matrix([[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], [0, 0, 0], list(mins), list(maxs))
 

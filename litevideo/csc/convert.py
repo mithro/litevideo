@@ -19,10 +19,21 @@ channel 2, ``g`` channel 1, ``b`` channel 0, so RGB is (R, G, B) (Figure
 and control inputs coded like the AVI InfoFrame (CEA-861-D Tables 8, 9, 11
 and CEA-861-E's YQ): ``fmt_in``/``fmt_out`` (``PixelFormat``: 0 RGB, 1 YCbCr
 4:2:2, 2 YCbCr 4:4:4), ``colorimetry`` (1 BT.601, 2 BT.709; 0 and 3 fall
-back to BT.709), ``rgb_limited`` and ``ycc_limited`` quantization ranges.
-The matrix coefficients come from a small constant table indexed by
-(direction, colorimetry, ranges); the controls are quasi-static (change
-them during blanking). DE/HSYNC/VSYNC ride along the pipeline.
+back to BT.709), the RGB quantization range on each side
+(``rgb_in_limited``, ``rgb_out_limited``: RGB to RGB with different ranges
+rescales, HDMI 1.3 §6.6) and ``ycc_limited``. The matrix coefficients come
+from a small constant table indexed by (direction, colorimetry, ranges); the
+controls are quasi-static (change them during blanking). DE/HSYNC/VSYNC ride
+along the pipeline.
+
+``AVIFormatControl`` turns AVI InfoFrame fields into those controls with the
+CEA-861-D defaults: Y = 3 is reserved (treated as RGB); C = 0 ("no data")
+means BT.601 for the SD formats (VIC 1-15 and 17-30 except the 720p and
+1080i codes 4, 5, 19, 20) and BT.709 otherwise
+(CEA-861-D §6.4, Table 9 note); Q = 0 ("default") means limited-range RGB
+for every CE format except VIC 1 (640x480p), which is full range
+(CEA-861-D §5.1, HDMI 1.3 §6.6); YQ = 1 is full-range YCC, anything else
+limited (CEA-861-E).
 """
 
 from migen import *
@@ -53,22 +64,25 @@ def wire_matrix(matrix, in_order, out_order):
                      [matrix.maxs[out_order[i]] for i in range(3)])
 
 
-def select_matrix(fmt_in, fmt_out, colorimetry, rgb_limited, ycc_limited):
+def select_matrix(fmt_in, fmt_out, colorimetry, rgb_in_limited, rgb_out_limited, ycc_limited):
     """The wire-order matrix the converter applies for these controls."""
     col = cm.BT601 if colorimetry == 1 else cm.BT709
-    rgb_range = cm.LIMITED if rgb_limited else cm.FULL
-    ycc_range = cm.LIMITED if ycc_limited else cm.FULL
+    rgb_in  = cm.LIMITED if rgb_in_limited else cm.FULL
+    rgb_out = cm.LIMITED if rgb_out_limited else cm.FULL
+    ycc     = cm.LIMITED if ycc_limited else cm.FULL
     in_rgb, out_rgb = fmt_in == PixelFormat.RGB, fmt_out == PixelFormat.RGB
     if in_rgb and not out_rgb:
-        return wire_matrix(cm.rgb2ycbcr_matrix(col, rgb_range, ycc_range), _RGB_ORDER, _YCC_ORDER)
+        return wire_matrix(cm.rgb2ycbcr_matrix(col, rgb_in, ycc), _RGB_ORDER, _YCC_ORDER)
     if out_rgb and not in_rgb:
-        return wire_matrix(cm.ycbcr2rgb_matrix(col, ycc_range, rgb_range), _YCC_ORDER, _RGB_ORDER)
+        return wire_matrix(cm.ycbcr2rgb_matrix(col, ycc, rgb_out), _YCC_ORDER, _RGB_ORDER)
+    if in_rgb and out_rgb and rgb_in != rgb_out:
+        return cm.rgb_range_matrix(rgb_in, rgb_out)
     return cm.identity_matrix()
 
 
-def convert_line(pixels, fmt_in, fmt_out, colorimetry, rgb_limited, ycc_limited, cw=12):
+def convert_line(pixels, fmt_in, fmt_out, colorimetry, rgb_in_limited, rgb_out_limited, ycc_limited, cw=12):
     """Reference model for one active line of wire-order (c0, c1, c2) pixels."""
-    q = cm.quantize(select_matrix(fmt_in, fmt_out, colorimetry, rgb_limited, ycc_limited), cw)
+    q = cm.quantize(select_matrix(fmt_in, fmt_out, colorimetry, rgb_in_limited, rgb_out_limited, ycc_limited), cw)
     if fmt_in == PixelFormat.YCBCR422:
         pixels = unpack422(pixels)
     pixels = [cm.apply_quantized(q, cw, p) for p in pixels]
@@ -94,9 +108,10 @@ class PixelFormatConverter(LiteXModule):
         self.source = Record(video_data_layout)
         self.fmt_in      = Signal(2)
         self.fmt_out     = Signal(2)
-        self.colorimetry = Signal(2)
-        self.rgb_limited = Signal()
-        self.ycc_limited = Signal()
+        self.colorimetry     = Signal(2)
+        self.rgb_in_limited  = Signal()
+        self.rgb_out_limited = Signal()
+        self.ycc_limited     = Signal()
 
         # # #
 
@@ -115,22 +130,30 @@ class PixelFormatConverter(LiteXModule):
         de_b = Signal(matrix.latency)
         self.sync += de_b.eq(Cat(a.de, de_b))   # DE alongside the matrix
 
-        sel = Signal(5)   # direction[4:3] (0 none, 1 rgb->ycc, 2 ycc->rgb), colorimetry[2], rgb_limited[1], ycc_limited[0]
+        # Table index: direction[5:4] (0 identity, 1 rgb->ycc, 2 ycc->rgb, 3 rgb range),
+        # colorimetry[3], rgb_in_limited[2], rgb_out_limited[1], ycc_limited[0].
+        sel = Signal(6)
         in_rgb, out_rgb = self.fmt_in == PixelFormat.RGB, self.fmt_out == PixelFormat.RGB
-        self.comb += sel.eq(Cat(self.ycc_limited, self.rgb_limited, self.colorimetry == 1,
-                                Mux(in_rgb & ~out_rgb, 1, Mux(out_rgb & ~in_rgb, 2, 0))))
+        direction = Signal(2)
+        self.comb += [
+            If(in_rgb & ~out_rgb, direction.eq(1)
+            ).Elif(out_rgb & ~in_rgb, direction.eq(2)
+            ).Elif(in_rgb & out_rgb, direction.eq(3)
+            ).Else(direction.eq(0)),
+            sel.eq(Cat(self.ycc_limited, self.rgb_out_limited, self.rgb_in_limited, self.colorimetry == 1, direction)),
+        ]
         cases = {}
-        for direction in range(3):
+        for d in range(4):
             for col in range(2):
-                for rgb_l in range(2):
-                    for ycc_l in range(2):
-                        fmt_in, fmt_out = {0: (0, 0), 1: (0, 2), 2: (2, 0)}[direction]
-                        q = cm.quantize(select_matrix(fmt_in, fmt_out, 1 if col else 2, rgb_l, ycc_l), cw)
-                        stmts = []
-                        for i in range(3):
-                            stmts += [matrix.offsets[i].eq(q.offsets[i]), matrix.mins[i].eq(q.mins[i]), matrix.maxs[i].eq(q.maxs[i])]
-                            stmts += [matrix.coefs[i][j].eq(q.m[i][j]) for j in range(3)]
-                        cases[(direction << 3) | (col << 2) | (rgb_l << 1) | ycc_l] = stmts
+                for ranges in range(8):
+                    rgb_in_l, rgb_out_l, ycc_l = (ranges >> 2) & 1, (ranges >> 1) & 1, ranges & 1
+                    fmt_in, fmt_out = {0: (2, 2), 1: (0, 2), 2: (2, 0), 3: (0, 0)}[d]
+                    q = cm.quantize(select_matrix(fmt_in, fmt_out, 1 if col else 2, rgb_in_l, rgb_out_l, ycc_l), cw)
+                    stmts = []
+                    for i in range(3):
+                        stmts += [matrix.offsets[i].eq(q.offsets[i]), matrix.mins[i].eq(q.mins[i]), matrix.maxs[i].eq(q.maxs[i])]
+                        stmts += [matrix.coefs[i][j].eq(q.m[i][j]) for j in range(3)]
+                    cases[(d << 4) | (col << 3) | ranges] = stmts
         self.sync += Case(sel, cases)
 
         # Stage C: 4:2:2 pack or delay.
@@ -148,4 +171,32 @@ class PixelFormatConverter(LiteXModule):
         self.comb += [
             self.source.de.eq(c.de), self.source.hsync.eq(hs[-1]), self.source.vsync.eq(vs[-1]),
             self.source.b.eq(c.c0), self.source.g.eq(c.c1), self.source.r.eq(c.c2),
+        ]
+
+
+class AVIFormatControl(LiteXModule):
+    """AVI InfoFrame fields (CEA-861-D §6.4) to converter controls, applying
+    the defaults described in the module docstring."""
+    def __init__(self):
+        self.y   = Signal(2)
+        self.c   = Signal(2)
+        self.q   = Signal(2)
+        self.yq  = Signal(2)
+        self.vic = Signal(7)
+
+        self.fmt         = Signal(2)
+        self.colorimetry = Signal(2)
+        self.rgb_limited = Signal()
+        self.ycc_limited = Signal()
+
+        # # #
+
+        sd = Signal()
+        self.comb += [
+            sd.eq((((self.vic >= 1) & (self.vic <= 15)) | ((self.vic >= 17) & (self.vic <= 30)))
+                  & (self.vic != 4) & (self.vic != 5) & (self.vic != 19) & (self.vic != 20)),   # 720p and 1080i are HD
+            self.fmt.eq(Mux(self.y == 3, PixelFormat.RGB, self.y)),
+            self.colorimetry.eq(Mux((self.c == 1) | (self.c == 2), self.c, Mux(sd, 1, 2))),
+            self.rgb_limited.eq((self.q == 1) | ((self.q == 0) & (self.vic != 1))),
+            self.ycc_limited.eq(self.yq != 1),
         ]
