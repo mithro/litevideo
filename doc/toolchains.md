@@ -88,7 +88,10 @@ regenerated from it, and the snap's fasm2frames/xc7frames2bit); then
         --output-dir build/netv2-hdmi-tx-openxc7 --csr-csv build/netv2-hdmi-tx-openxc7/csr.csv
 
 The snap alone (`fpgas-online-test-designs/.venv/toolchains/openxc7`) does
-not work for this design, see the findings.
+not work for this design, see the findings. The scripts that built the
+local nextpnr-xilinx (cmake, `BUILD_PYTHON=OFF`, system Python) and
+regenerated the chip database are kept beside the tools in
+`~/github/openXC7/scripts/` (`build_nextpnr.sh`, `chipdb.sh`).
 
 `bench/netv2/openxc7.py` applies the litex-boards/openXC7 device-name fixup
 (`xc7a100t-fgg484-2` -> `xc7a100tfgg484-2`), a chipdb symlink and the
