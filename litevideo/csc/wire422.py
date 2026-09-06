@@ -16,7 +16,8 @@ pixel 1 odd, counted from the first active pixel of the line):
 These free-running modules carry the pixel stream as ``c0/c1/c2`` with
 ``de``; parity restarts at every DE rise. ``YCbCr444ToWire422`` averages the
 chroma of each pair (rounded); ``Wire422ToYCbCr444`` replicates the pair's
-chroma into both pixels (no interpolation). Both have latency 1.
+chroma into both pixels (no interpolation). Both have latency 2
+(input register, output register).
 """
 
 from migen import *
@@ -33,7 +34,7 @@ def wire_layout(dw):
 class YCbCr444ToWire422(LiteXModule):
     """sink: c0 = Cb, c1 = Y, c2 = Cr (the 4:4:4 wire order of Figure 6-3);
     source: the 4:2:2 wire words."""
-    latency = 1
+    latency = 2
 
     def __init__(self, dw=8):
         self.sink   = Record(wire_layout(dw))
@@ -78,7 +79,7 @@ class YCbCr444ToWire422(LiteXModule):
 
 class Wire422ToYCbCr444(LiteXModule):
     """sink: 4:2:2 wire words; source: c0 = Cb, c1 = Y, c2 = Cr per pixel."""
-    latency = 1
+    latency = 2
 
     def __init__(self, dw=8):
         self.sink   = Record(wire_layout(dw))
