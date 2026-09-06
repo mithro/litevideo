@@ -18,6 +18,8 @@ from migen import *
 from litex.gen import *
 from litex.build.parser import LiteXArgumentParser
 from litex.soc.cores.clock import S7PLL, S7MMCM
+from litex.soc.interconnect.csr import *
+from migen.genlib.cdc import MultiReg
 from litex.soc.integration.soc_core import SoCMini
 from litex.soc.integration.builder import Builder
 from litex_boards.platforms import kosagi_netv2
@@ -33,25 +35,36 @@ VIC_720P60   = 4
 class CRG(LiteXModule):
     """sys from a PLL; optionally the self-timed pix/pix5x output clocks from an
     MMCM (transmitter benches) and a 200 MHz IDELAYCTRL reference (receiver)."""
-    def __init__(self, platform, sys_clk_freq, with_pix=True, with_idelay=False):
+    def __init__(self, platform, sys_clk_freq, with_pix=True, with_idelay=False, fractional=True):
         self.rst      = Signal()
         self.cd_sys   = ClockDomain()
+        self.locked   = CSRStatus(fields=[
+            CSRField("pll",  1, description="sys PLL locked."),
+            CSRField("mmcm", 1, description="pixel MMCM locked (1 when there is none)."),
+        ])
 
         clk50 = platform.request("clk50")
         self.pll = pll = S7PLL(speedgrade=-2)
         self.comb += pll.reset.eq(self.rst)
         pll.register_clkin(clk50, 50e6)
         pll.create_clkout(self.cd_sys, sys_clk_freq)
+        self.specials += MultiReg(pll.locked, self.locked.fields.pll)
+        self.comb += self.locked.fields.mmcm.eq(1)
 
         if with_pix:
             self.cd_pix   = ClockDomain()
             self.cd_pix5x = ClockDomain()
-            self.mmcm = mmcm = S7MMCM(speedgrade=-2)
+            # Fractional MMCM settings give 74.219 MHz from 50 MHz; the integer
+            # configuration (openXC7 flow, whose MMCM support is integer-only)
+            # is 50 * 59 / 4 / 10 = 73.75 MHz, within the 1% margin.
+            margin = 2e-3 if fractional else 1e-2
+            self.mmcm = mmcm = S7MMCM(speedgrade=-2, fractional=fractional)
             self.comb += mmcm.reset.eq(self.rst)
             mmcm.register_clkin(clk50, 50e6)
-            mmcm.create_clkout(self.cd_pix,   PIX_CLK_FREQ,     margin=2e-3)
-            mmcm.create_clkout(self.cd_pix5x, 5 * PIX_CLK_FREQ, margin=2e-3, with_reset=False)
+            mmcm.create_clkout(self.cd_pix,   PIX_CLK_FREQ,     margin=margin)
+            mmcm.create_clkout(self.cd_pix5x, 5 * PIX_CLK_FREQ, margin=margin, with_reset=False)
             platform.add_false_path_constraints(self.cd_sys.clk, self.cd_pix.clk)
+            self.specials += MultiReg(mmcm.locked, self.locked.fields.mmcm)
 
         if with_idelay:
             from litex.soc.cores.clock import S7IDELAYCTRL
@@ -74,7 +87,8 @@ class BenchSoC(SoCMini):
         kwargs.update(cpu_type="None", with_uart=False, with_timer=False, integrated_sram_size=0,
                       ident=ident, ident_version=True)
         SoCMini.__init__(self, platform, sys_clk_freq, **kwargs)
-        self.crg = CRG(platform, sys_clk_freq, with_pix=with_pix, with_idelay=with_idelay)
+        self.crg = CRG(platform, sys_clk_freq, with_pix=with_pix, with_idelay=with_idelay,
+                       fractional=(toolchain != "openxc7"))
         self.add_uartbone(uart_name="serial", baudrate=115200)
         if toolchain == "openxc7":
             from bench.netv2.openxc7 import prepare_soc
