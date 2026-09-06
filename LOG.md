@@ -70,3 +70,13 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
 - Fixes to existing code: LiteDRAM 2026.04 port attribute names, `phy_layout("raw")`
   `c2` width 11 -> 10 (upstream typo), Pillow `ANTIALIAS` -> `LANCZOS`.
 - Sub-agent code review of the protocol layer dispatched; CI run pending.
+- **Phase 1 code review** (sub-agent, with probing simulations) found two
+  high-severity issues, both fixed: the period decoder left the video guard
+  band on a value mismatch, so pixels equal to the guard band characters
+  (B,G,R = 0xAB,0x55,0xAB) were swallowed; the island encoder allowed only 9
+  control characters between islands (tS,min is 12). Also fixed: syncs
+  latched instead of live inside islands (encoder) and reported one
+  character late (decoder), inconsistent `sink.valid` handling, unclamped
+  `max_packets`, missing island counter. Ten edge-case tests added; the TMDS
+  model is now cross-checked against LiteX TMDSEncoder gateware. 46 tests pass.
+- Phase 2 (transmitter) plan written and sent for review.

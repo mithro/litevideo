@@ -10,7 +10,7 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] Phase 0+1 plan (2 review rounds, approved)
 - [x] `pyproject.toml` + uv environment pinned to LiteX 2026.04
 - [x] `test/` with the existing csc benches ported to pytest
-- [~] `.github/workflows/ci.yml` (pushed, first run pending)
+- [x] `.github/workflows/ci.yml` (green)
 - [x] `scripts/limited.py` cgroup wrapper
 - [x] `doc/` skeleton and README update
 
@@ -19,7 +19,7 @@ Status: `[ ]` open, `[~]` in progress, `[x]` done, `[!]` blocked (reason).
 - [x] `hdmi/bch.py` + vectors vs hdl-util
 - [x] `hdmi/model.py` golden model
 - [x] `hdmi/period.py` period decoder (DecodeTERC4 compat wrapper deferred to phase 5)
-- [~] island decoder, island encoder, tests, `doc/hdmi-protocol.md` (done; sub-agent review pending)
+- [x] island decoder, island encoder, tests, `doc/hdmi-protocol.md` (reviewed, fixes landed)
 
 ## Phase 2: transmitter
 - [ ] framer, scheduler, InfoFrame generators, `HDMIOut`, S7 PHY hdmi mode
