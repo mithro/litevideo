@@ -72,7 +72,12 @@ characters chosen for error resilience:
 and 2 `0100110011`; channel 0 is not fixed but carries
 `TERC4({1, 1, VSYNC, HSYNC})`, i.e. 0xC to 0xF (§5.2.3.3). Note that
 channel 1's video and data guard band characters are identical, so the
-period decoder uses channel 2 to tell them apart.
+period decoder recognises a video guard band only when all three channels
+carry their video value and a data guard band when channels 1 and 2 both
+carry `0100110011`. Guard bands are exactly two characters long, and the
+video guard band values are also legal pixel encodings (B,G,R =
+0xAB,0x55,0xAB), so after recognising the first character the decoder
+consumes the second by count rather than by value.
 
 ## 3. Data islands
 
@@ -83,7 +88,7 @@ Inside an island every channel sends TERC4 characters (§5.2.3.1):
 | 0 | HSYNC |
 | 1 | VSYNC |
 | 2 | packet header bit |
-| 3 | 0 on the first character after the leading guard band, 1 on every other packet character (HDMI 1.4b CTS) |
+| 3 | 0 on the first character after the leading guard band, 1 on every other packet character (HDMI 1.3 Figure 5-3 channel 0 row; spelled out in the HDMI 1.4b CTS) |
 
 Channels 1 and 2 carry the four BCH blocks: block k occupies bit k of both
 channels, channel 1 with the even bit and channel 2 with the odd bit
@@ -125,7 +130,13 @@ From §5.2.3.2, Table 5-4 and Figure 5-3:
   50 ms;
 - at least one island is sent every two video fields while video is on;
 - the Data Island preamble code must never be sent outside a preamble
-  (§5.2.1.1).
+  (§5.2.1.1);
+- HSYNC and VSYNC are carried live on every island character (§5.2.3.1).
+
+`DataIslandEncoder` enforces the first rule between consecutive islands by
+staying busy for 4 characters after the trailing guard band (4 + the next
+8-character preamble = 12); the framer enforces it against video by placing
+islands only where they fit, and supplies live syncs.
 
 ## 6. LiteVideo modules
 
@@ -134,7 +145,7 @@ From §5.2.3.2, Table 5-4 and Figure 5-3:
 | `TMDSCharacterDecoder(channel)` | `hdmi/tmds.py` | 1 | classify one character: data, control value, guard bands, TERC4 word |
 | `HDMIPeriodDecoder` | `hdmi/period.py` | 2 | period state machine; `video_data_layout` source (hsync, vsync, de, r, g, b); island nibbles and `island_active`/`island_first` |
 | `DataIslandDecoder` | `hdmi/island/decoder.py` | 1 after character 31 | packets with `ecc_ok`, packet and error counters |
-| `DataIslandEncoder` | `hdmi/island/encoder.py` | — | packet stream to framed island characters; `max_packets` and `start` from the framer |
+| `DataIslandEncoder` | `hdmi/island/encoder.py` | — | packet stream to framed island characters; `max_packets` (clamped to 18) and `start` from the framer; ignores `source.ready` (one character per cycle once started) |
 | model | `hdmi/model.py` | — | Python reference for all of the above |
 
 All modules run in the default clock domain and are meant to be wrapped with
