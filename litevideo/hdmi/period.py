@@ -157,7 +157,7 @@ class HDMIPeriodDecoder(LiteXModule):
 
         # Registered outputs.
         self.sync += [
-            self.period.eq(Mux(valid, period, Period.CONTROL)),
+            self.period.eq(Mux(valid, Mux(self.dvi_mode, Mux(de, Period.VIDEO, Period.CONTROL), period), Period.CONTROL)),
             self.island_active.eq(in_island & valid),
             self.island_first.eq(first & in_island & valid),
             self.nibble0.eq(dec0.terc4),

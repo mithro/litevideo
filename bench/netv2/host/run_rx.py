@@ -21,7 +21,7 @@ import time
 
 from bench.netv2.host import rig
 
-RX = ["hdmi_rx_status", "hdmi_rx_timing", "hdmi_rx_avi", "hdmi_rx_frames", "hdmi_rx_islands", "hdmi_rx_packets",
+RX = ["main_raw_frame_crc", "main_rgb_frame_crc", "hdmi_rx_status", "hdmi_rx_timing", "hdmi_rx_avi", "hdmi_rx_frames", "hdmi_rx_islands", "hdmi_rx_packets",
       "hdmi_rx_ecc_errors", "hdmi_rx_period_errors", "hdmi_rx_avi_count",
       "hdmi_rx_periods_0", "hdmi_rx_periods_1", "hdmi_rx_periods_2", "hdmi_rx_periods_3",
       "hdmi_rx_audio_n", "hdmi_rx_audio_cts", "hdmi_rx_audio_infoframe", "hdmi_rx_audio_asps", "hdmi_rx_audio_acrs",
@@ -76,11 +76,23 @@ def main():
         check(f"{ch} character sync", res["synced"] == 1, json.dumps(res))
     time.sleep(0.5)
 
-    a = rig.csr_read(RX)
-    t0 = time.monotonic()
-    time.sleep(2.0)
-    b = rig.csr_read(RX)
-    dt = time.monotonic() - t0
+    def window(seconds=2.0):
+        a = rig.csr_read(RX)
+        t0 = time.monotonic()
+        time.sleep(seconds)
+        b = rig.csr_read(RX)
+        return a, b, time.monotonic() - t0
+
+    a, b, dt = window()
+    # A source without preambles (DVI, which is what the Pi sends with no EDID)
+    # never produces a video period in HDMI mode: fall back to the DVI rule.
+    dvi_fallback = ((b["hdmi_rx_periods_1"] >> 16) - (a["hdmi_rx_periods_1"] >> 16)) & 0xFFFF == 0 \
+        and b["hdmi_rx_islands"] == a["hdmi_rx_islands"]
+    if dvi_fallback:
+        rig.csr_write("hdmi_rx_control", 0b11)   # dvi_mode | convert
+        time.sleep(0.5)
+        a, b, dt = window()
+        notes.append("no preambles seen: receiver switched to DVI mode (control.dvi_mode)")
 
     check("channels synchronised", b["chansync_channels_synced"] == 1, f"{b['chansync_channels_synced']}")
     st = b["hdmi_rx_status"]
@@ -94,7 +106,7 @@ def main():
     hist = {"control": (b["hdmi_rx_periods_0"] - a["hdmi_rx_periods_0"]) & 0xFFFF,
             "video": ((b["hdmi_rx_periods_1"] >> 16) - (a["hdmi_rx_periods_1"] >> 16)) & 0xFFFF,
             "island": (b["hdmi_rx_periods_3"] - a["hdmi_rx_periods_3"]) & 0xFFFF}
-    check("video periods seen", hist["video"] > 0, str(hist))
+    check("video periods seen", hist["video"] > 0 or (dvi_fallback and hactive > 0), str(hist))
     avi = b["hdmi_rx_avi"]
     # hdmi_rx_avi fields: y[1:0] c[3:2] q[5:4] vic[12:6] m[14:13] valid[15] checksum_ok[16]
     avi_valid = (avi >> 15) & 1
@@ -103,10 +115,15 @@ def main():
     if avi_valid:
         detail = f"y={avi & 3} c={(avi >> 2) & 3} q={(avi >> 4) & 3} vic={(avi >> 6) & 0x7F} m={(avi >> 13) & 3} checksum_ok={(avi >> 16) & 1}"
         check("AVI InfoFrame received", ((avi >> 16) & 1) == 1, detail)
+    if dvi_fallback:
+        mode = "DVI (no preambles, decoded with the DVI rule)"
     check("mode identified", True, f"{mode}: +{islands} islands, +{(b['hdmi_rx_packets'] - a['hdmi_rx_packets']) & 0xFFFFFFFF} packets, ECC errors +{(b['hdmi_rx_ecc_errors'] - a['hdmi_rx_ecc_errors']) & 0xFFFFFFFF}")
     if islands:
         n, cts = b["hdmi_rx_audio_n"], b["hdmi_rx_audio_cts"]
         check("audio ACR", True, f"N={n} CTS={cts} asps +{(b['hdmi_rx_audio_asps'] - a['hdmi_rx_audio_asps']) & 0xFFFFFFFF}")
+    crcs = [rig.csr_read(["main_raw_frame_crc", "main_rgb_frame_crc"]) for _ in range(3)]
+    check("frame CRC stable (static desktop)", len({c["main_raw_frame_crc"] for c in crcs}) == 1,
+          "raw " + ", ".join(f"{c['main_raw_frame_crc']:#010x}" for c in crcs) + "; rgb " + ", ".join(f"{c['main_rgb_frame_crc']:#010x}" for c in crcs))
     notes.append("Pi HDMI-A-2 after: " + pi_hdmi_state())
 
     report = args.report or os.path.join("doc", "reports", time.strftime("%Y-%m-%d") + "-netv2-rx.md")
