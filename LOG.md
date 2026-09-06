@@ -134,7 +134,7 @@ Newest first. Dates are ISO 8601, times are Adelaide local (ACST, UTC+9:30).
   build wrapper, a Vivado child was found outside the systemd scope; the
   wrapper itself verifies fine, so check `/proc/<pid>/cgroup` after launch.
 
-## 2026-09-07 (afternoon)
+## 2026-09-07 (01:30 ACST)
 
 - **Phase 5 receiver in simulation.** `litevideo/hdmi/receiver.py`:
   `HDMIReceiver` = period decoder + island decoder + AVI latch +
